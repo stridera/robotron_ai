@@ -1,0 +1,184 @@
+"""ChampionBrain — the shared decision core for every input/output combination.
+
+It consumes an observation (player + entities in planner pixel space, engine
+entity names) and returns a (move, fire) pair of directions 1..8. Internally it
+is the exact pipeline that reached wave 138 on the memory path:
+
+    velocity tracking  ->  latency extrapolation  ->  player forward-prediction
+    ->  evolved FSM (chooseOutputs)  ->  clearance planner (minimal-deviation
+    multi-step dodge search)
+
+The brain is perception- and controller-agnostic; the harness feeds it and
+routes its output to whichever controller is active.
+"""
+import json
+import os
+
+# The planner reads these at import time, so seed the champion defaults BEFORE
+# importing the engine modules. setdefault => real env vars still win (for A/B).
+os.environ.setdefault("VSEARCH_ASMDYN", "1")
+os.environ.setdefault("VSEARCH_H", "6")
+os.environ.setdefault("VSEARCH_CLEAR_DANGER", "18")
+os.environ.setdefault("VSEARCH_CLEAR_MARGIN", "10")
+os.environ.setdefault("FSM_RESCUE_SEEK", "1")
+
+from .engine import robotron_fsm as fsm                       # noqa: E402
+from .engine.clearance_planner import clearance_search, DXY   # noqa: E402
+from . import coords                                          # noqa: E402
+
+_ENGINE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine")
+
+# Default latency compensation (decision ticks) per input path. The memory path
+# reads fresh via the 6809 list-walk (~0.25 ticks stale after frame-sync); the
+# vision path adds render + capture + inference age (~1.0 tick).
+DEFAULT_LAG_MEMORY = 0.25
+DEFAULT_LAG_VISION = 1.0
+# Player forward-prediction: the sent move takes ~1.8 frames to actuate; lead the
+# player position that far along the last command so we dodge from where the
+# player WILL be. 1.8 frames / 4 frames-per-tick = 0.45 ticks. Enabled on the
+# memory path (the W138 config); left off on vision where player detection is
+# already noisy.
+DEFAULT_PLAYER_LEAD = 0.45
+
+# The FSM's obs-limited slot selection (same category budgets as MAME play): the
+# planner only sees the nearest N of each threat family, mirroring the arcade
+# hardware's per-frame object limit the champion was evolved against.
+SLOT_CATEGORIES = [
+    (6, {'EnforcerBullet', 'TankShell', 'CruiseMissile', 'Prog'}),
+    (6, {'Enforcer', 'Tank'}),
+    (6, {'Sphereoid', 'Quark'}),
+    (10, {'Grunt', 'Brain'}),
+    (5, {'Hulk'}),
+    (4, {'Electrode'}),
+    (4, {'Mikey', 'Mommy', 'Daddy'}),
+]
+CATCHALL_SLOTS = 4
+
+
+class VelocityTracker:
+    """Per-entity pixel-space velocity across decision ticks, with EMA smoothing.
+
+    Identity = nearest same-name entity within a sane per-tick radius. The raw
+    2-frame difference is noisy (async read jitter doubles under differencing)
+    and that noise is multiplied by the lag into the extrapolation the planner
+    dodges on, so an EMA de-noises the fast projectiles (spark/missile/shell =
+    most real deaths) at almost no lag cost.
+    """
+    VMAX = 130.0
+
+    def __init__(self, alpha: float = 0.5):
+        self.alpha = alpha
+        self.prev = []   # [(name, px, py, svx, svy)] — smoothed velocity carried
+
+    def reset(self):
+        self.prev = []
+
+    def velocities(self, cur):
+        """cur = [(px, py, name)]. Returns [(svx, svy)] aligned with cur."""
+        out, new_prev = [], []
+        a = self.alpha
+        for (px, py, name) in cur:
+            best, bd = None, 1e18
+            for pe in self.prev:
+                if pe[0] != name:
+                    continue
+                d = (px - pe[1]) ** 2 + (py - pe[2]) ** 2
+                if d < bd:
+                    bd, best = d, pe
+            if best is not None and bd <= self.VMAX ** 2:
+                rvx, rvy = px - best[1], py - best[2]
+                svx = a * rvx + (1 - a) * best[3]
+                svy = a * rvy + (1 - a) * best[4]
+            else:
+                svx = svy = 0.0
+            out.append((svx, svy))
+            new_prev.append((name, px, py, svx, svy))
+        self.prev = new_prev
+        return out
+
+
+class ChampionBrain:
+    """Wraps the evolved FSM + clearance planner. One instance per process
+    (the FSM keeps tuning constants as module globals)."""
+
+    def __init__(self, lag_ticks: float, player_lead_ticks: float = DEFAULT_PLAYER_LEAD,
+                 vel_ema_alpha: float = 0.5, debug: bool = False):
+        self.lag_ticks = lag_ticks
+        self.player_lead_ticks = player_lead_ticks
+        self.vt = VelocityTracker(alpha=vel_ema_alpha)
+        self.last_mv = 0
+        self._setup_fsm(debug)
+
+    def _setup_fsm(self, debug: bool):
+        W, H = int(coords.PIX_W), int(coords.PIX_H)
+        fsm.DEBUG_LEVEL = 0
+        fsm.MAX_RIGHT, fsm.MAX_TOP = W, H
+        fsm.MAX_BOTTOM, fsm.MAX_LEFT = 0, 0
+        fsm.Y_AXIS_INVERSION = H
+        # Prefer the hunt variant (gen-6 constants + endgame killable-hunt); it
+        # lifted wave-100+ completion from 4% to ~80% on the MAME books replica.
+        # Delete the _hunt json to fall back to the plain gen-6 champion.
+        p = os.path.join(_ENGINE_DIR, "fsm_evolved_planner_v2_hunt.json")
+        if not os.path.exists(p):
+            p = os.path.join(_ENGINE_DIR, "fsm_evolved_planner_v2_final.json")
+        with open(p) as f:
+            for name, val in json.load(f)["best_params"].items():
+                setattr(fsm, name, val)
+        B = float(getattr(fsm, "BORDER_ADJUST", 20))
+        fsm.ADJ_TOP, fsm.ADJ_BOTTOM = H - 2, 0 + B + 9
+        fsm.ADJ_LEFT, fsm.ADJ_RIGHT = 0 + 2, W - B
+        if debug:
+            print(f"[brain] evolved params loaded from {os.path.basename(p)}")
+
+    def reset(self):
+        """Clear cross-tick state (call on death / wave change)."""
+        self.vt.reset()
+        self.last_mv = 0
+
+    def _champion_action(self, sprites):
+        """sprites = [(px, py, name, vx, vy), ...] incl. ('Player'). -> (mv, fr) 1..8."""
+        player = next((s for s in sprites if s[2] == "Player"), None)
+        if player is None:
+            return 1, 1
+        px, py = player[0], player[1]
+        others = [s for s in sprites if s[2] != "Player"]
+        d2 = lambda s: (s[0] - px) ** 2 + (s[1] - py) ** 2  # noqa: E731
+        used, sel = set(), []
+        for cnt, types in SLOT_CATEGORIES:
+            for s in sorted([s for s in others if s[2] in types and id(s) not in used],
+                            key=d2)[:cnt]:
+                used.add(id(s)); sel.append(s)
+        sel += sorted([s for s in others if id(s) not in used], key=d2)[:CATCHALL_SLOTS]
+        data = [(px, py, "Player")] + [(s[0], s[1], s[2]) for s in sel]
+        try:
+            mv, fr = fsm.chooseOutputs(data)
+        except Exception:
+            mv, fr = 1, 1
+        mv = mv if mv >= 1 else 1
+        fr = fr if fr >= 1 else mv
+        return clearance_search(sprites, mv, fr)
+
+    def decide(self, player_xy, entities):
+        """player_xy = (px, py) planner; entities = [(px, py, name)] planner.
+        Returns (move, fire) directions 1..8."""
+        cur = list(entities)
+        vels = self.vt.velocities(cur)
+
+        # Player forward-prediction: lead along the last commanded direction.
+        plx, ply = player_xy
+        if self.player_lead_ticks > 0 and self.last_mv in DXY:
+            ldx, ldy = DXY[self.last_mv]
+            plx = min(max(plx + ldx * self.player_lead_ticks, 0.0), coords.PIX_W)
+            ply = min(max(ply + ldy * self.player_lead_ticks, 0.0), coords.PIX_H)
+
+        # Latency extrapolation: advance each entity along its tracked velocity so
+        # the planner dodges where threats WILL be, not where they were.
+        lag = self.lag_ticks
+        sprites = [(plx, ply, "Player", 0.0, 0.0)] + [
+            (min(max(x + vx * lag, 0.0), coords.PIX_W),
+             min(max(y + vy * lag, 0.0), coords.PIX_H), n, vx, vy)
+            for (x, y, n), (vx, vy) in zip(cur, vels)
+        ]
+        mv, fr = self._champion_action(sprites)
+        self.last_mv = mv
+        return mv, fr

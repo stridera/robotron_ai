@@ -1,0 +1,25 @@
+# robotron_ai runtime dependencies (Windows, Python 3.10+)
+#
+# Install everything for both paths:
+#   python -m venv .venv
+#   .venv\Scripts\pip install -r robotron_ai/requirements.txt
+#
+# Or install only what your path needs (see the groups below).
+
+# ── Always required (the decision core + coordinate math) ────────────────────
+numpy>=1.24
+opencv-python>=4.8        # frame handling / HDMI capture
+
+# ── Xenia emulator path ──────────────────────────────────────────────────────
+psutil>=5.9               # locate + read the xenia_canary.exe process (memory input)
+vgamepad>=0.1.0           # virtual Xbox 360 pad output (needs the ViGEmBus driver)
+
+# ── Vision path (YOLO) — Xenia --input yolo, and all real-hardware runs ───────
+ultralytics>=8.1          # YOLO detector (pulls in torch/torchvision)
+
+# ── Real Xbox hardware path ──────────────────────────────────────────────────
+pyserial>=3.5             # serial controller device output
+
+# ── Optional niceties ────────────────────────────────────────────────────────
+mss>=9.0                  # screen-capture fallback when window capture is unavailable
+pywin32>=306              # brings the Xenia window to the foreground during menu nav

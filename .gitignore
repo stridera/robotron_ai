@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Runtime scratch
+*.log
+snapshots/
+*.tmp
+
+# NOTE: weights/robotron.pt IS tracked on purpose — it's the bundled detector so
+# the tool runs out of the box. It's a large binary; consider git-lfs if the repo
+# is pushed somewhere with a strict per-file size limit.

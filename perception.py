@@ -1,0 +1,231 @@
+"""Perception — the input layer. Each source produces an Observation: the player
+position and the entity list, both in planner pixel space with engine entity
+names, ready for ChampionBrain.decide().
+
+    MemoryPerception   reads the guest entity buffer (Xenia only, gold standard).
+    VisionPerception   runs YOLO on a captured frame (Xenia window OR HDMI card);
+                       the only option on real hardware.
+
+Frame sources feed VisionPerception:
+    XeniaWindowSource  PrintWindow capture of the Xenia window.
+    HdmiSource         a cv2 capture device (the friend's HDMI capture card).
+"""
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
+
+from . import coords
+
+
+@dataclass
+class Observation:
+    """One tick of perception, in planner pixel space."""
+    player: Optional[Tuple[float, float]]          # None => player not visible
+    entities: List[Tuple[float, float, str]] = field(default_factory=list)
+
+
+class Perception(ABC):
+    # Visualization hooks. When collect_viz is True, perceive() should populate
+    # last_frame / last_boxes / last_player_px in SCREEN pixel space for the
+    # overlay. Memory perception has no frame, so it leaves them None (the
+    # harness draws a Xenia-window backdrop instead).
+    collect_viz = False
+    last_frame = None                    # BGR numpy frame, or None
+    last_boxes = None                    # [(cx, cy, w, h, label)] screen px, or None
+    last_player_px = None                # (cx, cy) screen px, or None
+
+    @abstractmethod
+    def perceive(self, state) -> Observation:
+        """Return the current Observation. `state` is the harness's GameState
+        (used by MemoryPerception, ignored by VisionPerception)."""
+
+    def reset(self) -> None:
+        """Clear any cross-tick state (called on death / wave change)."""
+
+
+# ── Memory perception (Xenia) ───────────────────────────────────────────────
+# game_state entity label -> engine (FSM/planner) entity name.
+LABEL_TO_NAME = {
+    'G': 'Grunt', 'H': 'Hulk', 'E': 'Electrode', 'B': 'Brain',
+    'F': 'Enforcer', 'FB': 'EnforcerBullet', 'S': 'Sphereoid', 'Q': 'Quark',
+    'P': 'Prog', 'T': 'Tank', 'TS': 'TankShell', 'MS': 'CruiseMissile',
+    'CC': 'Mikey', 'CW': 'Mommy', 'CM': 'Daddy',
+}
+
+
+class MemoryPerception(Perception):
+    """Turns a GameState (from GameStateReader) into an Observation."""
+
+    def perceive(self, state) -> Observation:
+        if state is None:
+            return Observation(None, [])
+        px, py = state.player_gx, state.player_gy
+        if px == 0 and py == 0:                    # player off-field / dead
+            return Observation(None, [])
+        player = coords.to_pixels(px, py)
+        ents = []
+        for e in state.entities:
+            name = LABEL_TO_NAME.get(e.label)
+            if name is None:
+                continue
+            ents.append(coords.to_pixels(e.gx, e.gy) + (name,))
+        return Observation(player, ents)
+
+
+# ── Frame sources ───────────────────────────────────────────────────────────
+class FrameSource(ABC):
+    @abstractmethod
+    def read(self):
+        """Return a BGR numpy frame (1280x720) or None."""
+
+    def release(self) -> None:
+        pass
+
+
+class XeniaWindowSource(FrameSource):
+    """Capture the Xenia window content (works even when occluded)."""
+
+    def __init__(self, window_title: str = "Xenia-canary",
+                 width: int = 1280, height: int = 720):
+        from .engine.screen_capture import ScreenCapture
+        self.cap = ScreenCapture(window_title=window_title, width=width, height=height)
+
+    def read(self):
+        ok, frame = self.cap.read()
+        return frame if ok else None
+
+    def release(self) -> None:
+        self.cap.release()
+
+
+class HdmiSource(FrameSource):
+    """Capture from an HDMI capture card exposed as a cv2 video device."""
+
+    def __init__(self, device=0, width: int = 1280, height: int = 720):
+        import cv2
+        self.cv2 = cv2
+        self.cap = cv2.VideoCapture(device)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self.w, self.h = width, height
+        if not self.cap.isOpened():
+            print(f"[hdmi] WARNING: capture device {device!r} did not open")
+
+    def read(self):
+        ok, frame = self.cap.read()
+        if not ok or frame is None:
+            return None
+        if frame.shape[1] != self.w or frame.shape[0] != self.h:
+            frame = self.cv2.resize(frame, (self.w, self.h))
+        return frame
+
+    def release(self) -> None:
+        if self.cap:
+            self.cap.release()
+
+
+# ── Vision perception (YOLO) ────────────────────────────────────────────────
+# YOLO class name -> engine entity name.
+CLS_TO_NAME = {
+    'G': 'Grunt', 'H': 'Hulk', 'E': 'Electrode', 'B': 'Brain',
+    'F': 'Enforcer', 'FB': 'EnforcerBullet', 'S': 'Sphereoid', 'Q': 'Quark',
+    'P': 'Prog', 'T': 'Tank', 'TS': 'TankShell', 'MS': 'CruiseMissile',
+    'C': 'Mommy',   # any family name — the FSM treats all civilians as rescues
+}
+
+# Per-class confidence gates. Missing a lethal threat is far worse than a
+# spurious box the planner routes around, so deadly/hard-to-detect classes get
+# LOW thresholds (max recall); the player gets a higher one to suppress phantom
+# double-Player detections that corrupt avoidance geometry. --conf raises the
+# floor for every class (never lowers recall unexpectedly).
+PER_CLASS_CONF = {
+    'Player': 0.35,
+    'E': 0.15, 'FB': 0.10, 'TS': 0.10, 'MS': 0.10,
+    'F': 0.10, 'H': 0.10, 'P': 0.12, 'T': 0.15,
+    'B': 0.20, 'S': 0.18, 'Q': 0.20, 'G': 0.25, 'C': 0.30,
+}
+
+
+class VisionPerception(Perception):
+    """Screen/HDMI frame -> YOLO detections -> Observation in planner space."""
+
+    def __init__(self, source: FrameSource, weights: str, conf: float = 0.4,
+                 track: bool = False, max_player_hold: int = 6):
+        from ultralytics import YOLO
+        self.source = source
+        self.model = YOLO(weights)
+        self.names = self.model.names
+        self.track = track
+        self.cls_conf = {k: max(v, conf) for k, v in PER_CLASS_CONF.items()}
+        self.base_conf = min(min(PER_CLASS_CONF.values()), conf)
+        self.max_player_hold = max_player_hold
+        self._player_hold = 0
+        self.last_player = None
+        # Warm up (first inference compiles kernels / inits the tracker).
+        frame = self.source.read()
+        if frame is not None:
+            self._infer(frame)
+
+    def reset(self) -> None:
+        self.last_player = None
+        self._player_hold = 0
+
+    def _infer(self, frame):
+        if self.track:
+            return self.model.track(frame, conf=self.base_conf, persist=True,
+                                    tracker="bytetrack.yaml", verbose=False)[0]
+        return self.model.predict(frame, conf=self.base_conf, verbose=False)[0]
+
+    def _parse_boxes(self, boxes):
+        """boxes -> (player_xy|None, entities, viz_boxes, player_px). The first
+        two are in planner space (the brain's frame); viz_boxes/player_px are in
+        SCREEN pixels for the overlay. Side-effect free (unit-testable)."""
+        player, best_pconf, ents = None, 0.0, []
+        viz_boxes, player_px = [], None
+        for box in boxes:
+            cls = self.names[int(box.cls[0])]
+            conf = float(box.conf[0])
+            if conf < self.cls_conf.get(cls, 1.0):     # per-class gate
+                continue
+            cx, cy = float(box.xywh[0][0]), float(box.xywh[0][1])
+            bw, bh = float(box.xywh[0][2]), float(box.xywh[0][3])
+            gx, gy = coords.px_to_game(cx, cy)
+            if cls == 'Player':
+                if conf > best_pconf:                  # keep only the best player
+                    best_pconf = conf
+                    player = coords.to_pixels(gx, gy)
+                    player_px = (cx, cy)
+                continue
+            name = CLS_TO_NAME.get(cls)
+            if name is None:
+                continue
+            ents.append(coords.to_pixels(gx, gy) + (name,))
+            viz_boxes.append((cx, cy, bw, bh, cls))
+        return player, ents, viz_boxes, player_px
+
+    def _resolve_player(self, player):
+        """Bounded last-player hold: reuse the last position for up to
+        max_player_hold blind frames, then report blind (None)."""
+        if player is None:
+            if self.last_player is not None and self._player_hold < self.max_player_hold:
+                self._player_hold += 1
+                return self.last_player
+            return None
+        self._player_hold = 0
+        self.last_player = player
+        return player
+
+    def perceive(self, state) -> Observation:
+        frame = self.source.read()
+        if frame is None:
+            if self.collect_viz:
+                self.last_frame, self.last_boxes, self.last_player_px = None, [], None
+            return Observation(None, [])
+        res = self._infer(frame)
+        player, ents, viz_boxes, player_px = self._parse_boxes(res.boxes)
+        if self.collect_viz:
+            self.last_frame = frame
+            self.last_boxes = viz_boxes
+            self.last_player_px = player_px
+        player = self._resolve_player(player)
+        return Observation(player, ents)
