@@ -7,11 +7,11 @@ plays on the **Xenia emulator** and on **real Xbox 360 hardware**.
 
 ```
             INPUT (perception)                 BRAIN                OUTPUT (control)
-  ┌─────────────────────────────────┐   ┌──────────────────┐   ┌────────────────────┐
-  │ memory   guest RAM  (Xenia)     │   │ velocity track   │   │ vgamepad  (Xenia)   │
+  ┌─────────────────────────────────┐    ┌──────────────────┐   ┌─────────────────────┐
+  │ memory   guest RAM  (Xenia)     │    │ velocity track   │   │ vgamepad  (Xenia)   │
   │ yolo     screen/HDMI + detector ├──▶│ latency predict  ├──▶│ serial    (real HW) │
-  └─────────────────────────────────┘   │ FSM + planner    │   └────────────────────┘
-        window capture / HDMI card      └──────────────────┘     move+fire dirs 1..8
+  └─────────────────────────────────┘    │ FSM + planner    │   └─────────────────────┘
+        window capture / HDMI card       └──────────────────┘     move+fire dirs 1..8
 ```
 
 Everything lands in one **planner pixel space (665×492)** before the brain sees
