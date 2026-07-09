@@ -35,9 +35,9 @@ DEFAULT_LAG_MEMORY = 0.25
 DEFAULT_LAG_VISION = 1.0
 # Player forward-prediction: the sent move takes ~1.8 frames to actuate; lead the
 # player position that far along the last command so we dodge from where the
-# player WILL be. 1.8 frames / 4 frames-per-tick = 0.45 ticks. Enabled on the
-# memory path (the W138 config); left off on vision where player detection is
-# already noisy.
+# player WILL be. 1.8 frames / 4 frames-per-tick = 0.45 ticks. Used on BOTH
+# paths (2026-07-08): the entire vision record campaign (W23 / S620,700) ran
+# with lead 0.45 — yolo5's Player detection (0.98 recall) is solid enough.
 DEFAULT_PLAYER_LEAD = 0.45
 
 # The FSM's obs-limited slot selection (same category budgets as MAME play): the
@@ -97,15 +97,112 @@ class VelocityTracker:
         return out
 
 
+class ProjectileCoaster:
+    """Track-and-coast layer for fast projectiles on the VISION path (ported
+    from robotron/brain_yolo.py, 2026-07-08 — the change that took the vision
+    bot from a W10.7 mean to W13.6+ / record W23).
+
+    The detector misses fast projectiles frame-to-frame, and VelocityTracker
+    needs two CONSECUTIVE sightings for a velocity — so most sparks were
+    extrapolated as stationary and dodges targeted the wrong spot. Robotron
+    projectiles fly straight at constant speed, so a track that goes
+    undetected can be coasted along its velocity for a few ticks with near-
+    zero error, and re-detection after k blind ticks recovers velocity as
+    displacement/(k+1).
+
+    TTL=3 per the 2026-07-08 A/B (drifted ghosts' position error grows faster
+    than the coverage benefit: p90 error 29px @TTL5 -> 19.7px @TTL3).
+    turn>0 curves blind CruiseMissile ghosts toward the player (they home);
+    the proven live config runs with turn=0.
+    """
+    NAMES = frozenset(('EnforcerBullet', 'TankShell', 'CruiseMissile', 'Prog'))
+    HOMING = {'CruiseMissile'}
+    GATE = 130.0   # px association gate (admits the fastest sparks), x2 when blind
+    VMAX = 130.0   # px/tick velocity clamp (mirrors VelocityTracker.VMAX)
+    ALPHA = 0.5    # velocity EMA
+
+    def __init__(self, ttl: float = 3.0, turn: float = 0.0):
+        self.ttl = ttl
+        self.turn = turn
+        self.tracks = []   # dicts: x,y coasted pos; lx,ly last-seen; vx,vy; name; miss
+
+    def reset(self):
+        self.tracks = []
+
+    @staticmethod
+    def _steer(vx, vy, tx, ty, max_turn):
+        import math
+        speed = math.hypot(vx, vy)
+        if speed < 1e-6 or (tx == 0.0 and ty == 0.0):
+            return vx, vy
+        cur = math.atan2(vy, vx)
+        want = math.atan2(ty, tx)
+        diff = (want - cur + math.pi) % (2 * math.pi) - math.pi
+        ang = cur + max(-max_turn, min(max_turn, diff))
+        return speed * math.cos(ang), speed * math.sin(ang)
+
+    def update(self, dets, player=None, dt=1.0):
+        """dets: [(x, y, name)] seen THIS sample (planner space). dt in decision
+        ticks. Returns [(x, y, name, vx, vy)] for every live track — fresh
+        detections plus unseen tracks coasted along their velocity."""
+        for t in self.tracks:
+            t['x'] += t['vx'] * dt
+            t['y'] += t['vy'] * dt
+            t['hit'] = False
+        for (x, y, name) in dets:
+            best, bd = None, 1e18
+            for t in self.tracks:
+                if t['name'] != name or t['hit']:
+                    continue
+                gate = self.GATE * max(dt, 0.3) * min(1 + t['miss'], 2)
+                d = (x - t['x']) ** 2 + (y - t['y']) ** 2
+                if d <= gate ** 2 and d < bd:
+                    bd, best = d, t
+            if best is None:
+                self.tracks.append(dict(x=x, y=y, lx=x, ly=y, vx=0.0, vy=0.0,
+                                        name=name, miss=0.0, hit=True))
+                continue
+            n = best['miss'] + dt
+            rvx, rvy = (x - best['lx']) / n, (y - best['ly']) / n
+            if rvx * rvx + rvy * rvy <= self.VMAX ** 2:
+                a = min(1.0, self.ALPHA * dt) if dt < 1.0 else self.ALPHA
+                best['vx'] = a * rvx + (1 - a) * best['vx']
+                best['vy'] = a * rvy + (1 - a) * best['vy']
+            best['x'], best['y'] = best['lx'], best['ly'] = x, y
+            best['miss'] = 0.0
+            best['hit'] = True
+        out, keep = [], []
+        for t in self.tracks:
+            if not t['hit']:
+                t['miss'] += dt
+                if t['miss'] > self.ttl:
+                    continue
+                if not (-30.0 <= t['x'] <= coords.PIX_W + 30.0
+                        and -30.0 <= t['y'] <= coords.PIX_H + 30.0):
+                    continue                          # left the arena for real
+                if player is not None and self.turn > 0 and t['name'] in self.HOMING:
+                    t['vx'], t['vy'] = self._steer(
+                        t['vx'], t['vy'],
+                        player[0] - t['x'], player[1] - t['y'], self.turn * dt)
+            keep.append(t)
+            out.append((t['x'], t['y'], t['name'], t['vx'], t['vy']))
+        self.tracks = keep
+        return out
+
+
 class ChampionBrain:
     """Wraps the evolved FSM + clearance planner. One instance per process
     (the FSM keeps tuning constants as module globals)."""
 
     def __init__(self, lag_ticks: float, player_lead_ticks: float = DEFAULT_PLAYER_LEAD,
-                 vel_ema_alpha: float = 0.5, debug: bool = False):
+                 vel_ema_alpha: float = 0.5, use_coaster: bool = False,
+                 debug: bool = False):
         self.lag_ticks = lag_ticks
         self.player_lead_ticks = player_lead_ticks
         self.vt = VelocityTracker(alpha=vel_ema_alpha)
+        # Vision path only: projectile track-and-coast (memory input is exact
+        # every tick, so coasting there would only add ghosts).
+        self.coaster = ProjectileCoaster() if use_coaster else None
         self.last_mv = 0
         self._setup_fsm(debug)
 
@@ -133,6 +230,8 @@ class ChampionBrain:
     def reset(self):
         """Clear cross-tick state (call on death / wave change)."""
         self.vt.reset()
+        if self.coaster is not None:
+            self.coaster.reset()
         self.last_mv = 0
 
     def _champion_action(self, sprites):
@@ -162,6 +261,15 @@ class ChampionBrain:
         """player_xy = (px, py) planner; entities = [(px, py, name)] planner.
         Returns (move, fire) directions 1..8."""
         cur = list(entities)
+        # Projectile classes go through the track-and-coast layer (it owns
+        # their identity AND velocity); everything else keeps the
+        # consecutive-frame VelocityTracker.
+        if self.coaster is not None:
+            proj = [e for e in cur if e[2] in ProjectileCoaster.NAMES]
+            cur = [e for e in cur if e[2] not in ProjectileCoaster.NAMES]
+            tracked = self.coaster.update(proj, player_xy)
+        else:
+            tracked = []
         vels = self.vt.velocities(cur)
 
         # Player forward-prediction: lead along the last commanded direction.
@@ -174,11 +282,12 @@ class ChampionBrain:
         # Latency extrapolation: advance each entity along its tracked velocity so
         # the planner dodges where threats WILL be, not where they were.
         lag = self.lag_ticks
-        sprites = [(plx, ply, "Player", 0.0, 0.0)] + [
-            (min(max(x + vx * lag, 0.0), coords.PIX_W),
-             min(max(y + vy * lag, 0.0), coords.PIX_H), n, vx, vy)
-            for (x, y, n), (vx, vy) in zip(cur, vels)
-        ]
+        clamp = lambda x, y, n, vx, vy: (  # noqa: E731
+            min(max(x + vx * lag, 0.0), coords.PIX_W),
+            min(max(y + vy * lag, 0.0), coords.PIX_H), n, vx, vy)
+        sprites = [(plx, ply, "Player", 0.0, 0.0)] \
+            + [clamp(x, y, n, vx, vy) for (x, y, n), (vx, vy) in zip(cur, vels)] \
+            + [clamp(x, y, n, vx, vy) for (x, y, n, vx, vy) in tracked]
         mv, fr = self._champion_action(sprites)
         self.last_mv = mv
         return mv, fr

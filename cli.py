@@ -143,8 +143,9 @@ def resolve_config(argv=None) -> argparse.Namespace:
         args.lag_ticks = (brain_mod.DEFAULT_LAG_MEMORY if args.input == "memory"
                           else brain_mod.DEFAULT_LAG_VISION)
     if args.player_lead is None:
-        args.player_lead = (brain_mod.DEFAULT_PLAYER_LEAD if args.input == "memory"
-                            else 0.0)
+        # Lead 0.45 on both paths (2026-07-08): the vision record campaign
+        # (W23 / S620,700) ran with it — player detection is no longer noisy.
+        args.player_lead = brain_mod.DEFAULT_PLAYER_LEAD
     # Frame-sync only makes sense reading guest memory each tick.
     args.frame_sync = (args.input == "memory") and not args.no_frame_sync
     return args
@@ -185,7 +186,9 @@ def main(argv=None) -> None:
 
     brain = brain_mod.ChampionBrain(
         lag_ticks=cfg.lag_ticks, player_lead_ticks=cfg.player_lead,
-        vel_ema_alpha=cfg.vel_ema, debug=cfg.debug)
+        vel_ema_alpha=cfg.vel_ema,
+        use_coaster=(cfg.input == "yolo"),   # vision only; memory is exact
+        debug=cfg.debug)
     controller = _build_controller(cfg)
 
     from .visualize import Visualizer
