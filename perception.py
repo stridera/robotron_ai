@@ -99,12 +99,29 @@ class XeniaWindowSource(FrameSource):
 
 
 class HdmiSource(FrameSource):
-    """Capture from an HDMI capture card exposed as a cv2 video device."""
+    """Capture from an HDMI capture card exposed as a cv2 video device.
+
+    The Xbox outputs 1080p60; the card may deliver 1080p frames which we
+    downscale to the model's native 1280x720 (an exact 1.5x, same aspect —
+    the coordinate transform is unchanged). Two latency/quality pitfalls
+    handled here (2026-07-08):
+
+      * cv2.VideoCapture BUFFERS frames. Reading at the ~12Hz decision rate
+        from a 60fps stream serves frames 4-5 deep in the queue = 60-80ms of
+        hidden lag (a full decision tick — the exact latency class that caused
+        the original W9-27 cap). We request BUFFERSIZE=1 and, since not all
+        backends honor it, drain the queue with grab()s before each retrieve.
+      * Downscaling uses INTER_AREA (the correct filter for shrinking) so the
+        ~10px projectile sprites stay as crisp as the training data.
+    """
+
+    DRAIN_GRABS = 3   # grab()s per read to flush any backend queue
 
     def __init__(self, device=0, width: int = 1280, height: int = 720):
         import cv2
         self.cv2 = cv2
         self.cap = cv2.VideoCapture(device)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.w, self.h = width, height
@@ -112,11 +129,16 @@ class HdmiSource(FrameSource):
             print(f"[hdmi] WARNING: capture device {device!r} did not open")
 
     def read(self):
-        ok, frame = self.cap.read()
+        # Drain stale frames so retrieve() returns the freshest one. grab()
+        # is cheap (no decode); only the final frame is decoded.
+        for _ in range(self.DRAIN_GRABS):
+            self.cap.grab()
+        ok, frame = self.cap.retrieve()
         if not ok or frame is None:
             return None
         if frame.shape[1] != self.w or frame.shape[0] != self.h:
-            frame = self.cv2.resize(frame, (self.w, self.h))
+            frame = self.cv2.resize(frame, (self.w, self.h),
+                                    interpolation=self.cv2.INTER_AREA)
         return frame
 
     def release(self) -> None:
