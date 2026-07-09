@@ -14,6 +14,12 @@ routes its output to whichever controller is active.
 import json
 import os
 
+# Whether the USER pinned the planner margins (before our setdefaults make the
+# vars exist unconditionally) — a pinned value always wins over the per-path
+# defaults applied in ChampionBrain.__init__.
+_USER_PINNED_MARGINS = ("VSEARCH_CLEAR_DANGER" in os.environ
+                        or "VSEARCH_CLEAR_MARGIN" in os.environ)
+
 # The planner reads these at import time, so seed the champion defaults BEFORE
 # importing the engine modules. setdefault => real env vars still win (for A/B).
 os.environ.setdefault("VSEARCH_ASMDYN", "1")
@@ -23,7 +29,12 @@ os.environ.setdefault("VSEARCH_CLEAR_MARGIN", "10")
 os.environ.setdefault("FSM_RESCUE_SEEK", "1")
 
 from .engine import robotron_fsm as fsm                       # noqa: E402
-from .engine.clearance_planner import clearance_search, DXY   # noqa: E402
+from .engine.clearance_planner import (clearance_search, DXY,  # noqa: E402
+                                       set_margins)
+# Vision-path planner margins (2026-07-08 dose-response A/B): ~1.15x the
+# memory-optimal 18/10 absorbs vision tracking noise (mean 14.4 vs 13.6,
+# worst-game floor W10 vs W7); 1.3x regressed. Memory path keeps 18/10.
+VISION_MARGINS = (21.0, 12.0)
 from . import coords                                          # noqa: E402
 
 _ENGINE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine")
@@ -201,8 +212,11 @@ class ChampionBrain:
         self.player_lead_ticks = player_lead_ticks
         self.vt = VelocityTracker(alpha=vel_ema_alpha)
         # Vision path only: projectile track-and-coast (memory input is exact
-        # every tick, so coasting there would only add ghosts).
+        # every tick, so coasting there would only add ghosts) + widened
+        # planner margins (env-pinned values always win).
         self.coaster = ProjectileCoaster() if use_coaster else None
+        if use_coaster and not _USER_PINNED_MARGINS:
+            set_margins(*VISION_MARGINS)
         self.last_mv = 0
         self._setup_fsm(debug)
 

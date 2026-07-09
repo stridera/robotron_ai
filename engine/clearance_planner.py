@@ -19,6 +19,17 @@ import numpy as np
 CLEAR_H = int(os.environ.get("VSEARCH_H", "6"))
 CLEAR_DANGER = float(os.environ.get("VSEARCH_CLEAR_DANGER", "18"))
 CLEAR_MARGIN = float(os.environ.get("VSEARCH_CLEAR_MARGIN", "10"))
+
+
+def set_margins(danger: float, margin: float) -> None:
+    """Rebind the safety margins after import (constants are read at call
+    time, so this takes effect immediately). Used by ChampionBrain to apply
+    the vision-path margins (2026-07-08 dose-response A/B: 18/10 is optimal
+    on exact memory input; 21/12 (~1.15x) is optimal on vision, absorbing
+    tracking noise — mean 14.4 vs 13.6, floor W10 vs W7; 1.3x regressed)."""
+    global CLEAR_DANGER, CLEAR_MARGIN
+    CLEAR_DANGER = float(danger)
+    CLEAR_MARGIN = float(margin)
 # Least-bad surround escape (2026-07-05): when NO heading clears the safety margin
 # (fully boxed in), the old code falls back to the FSM move — which in a dense
 # swarm is STAY (stand still = the classic deep-wave death). Instead pick the
