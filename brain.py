@@ -14,11 +14,12 @@ routes its output to whichever controller is active.
 import json
 import os
 
-# Whether the USER pinned the planner margins (before our setdefaults make the
-# vars exist unconditionally) — a pinned value always wins over the per-path
-# defaults applied in ChampionBrain.__init__.
+# Whether the USER pinned the planner margins / fireplan (before our
+# setdefaults make the vars exist unconditionally) — a pinned value always
+# wins over the per-path defaults applied in ChampionBrain.__init__.
 _USER_PINNED_MARGINS = ("VSEARCH_CLEAR_DANGER" in os.environ
                         or "VSEARCH_CLEAR_MARGIN" in os.environ)
+_USER_PINNED_FIREPLAN = "VSEARCH_FIREPLAN" in os.environ
 
 # The planner reads these at import time, so seed the champion defaults BEFORE
 # importing the engine modules. setdefault => real env vars still win (for A/B).
@@ -30,7 +31,7 @@ os.environ.setdefault("FSM_RESCUE_SEEK", "1")
 
 from .engine import robotron_fsm as fsm                       # noqa: E402
 from .engine.clearance_planner import (clearance_search, DXY,  # noqa: E402
-                                       set_margins)
+                                       set_margins, set_fireplan)
 # Vision-path planner margins (2026-07-08 dose-response A/B): ~1.15x the
 # memory-optimal 18/10 absorbs vision tracking noise (mean 14.4 vs 13.6,
 # worst-game floor W10 vs W7); 1.3x regressed. Memory path keeps 18/10.
@@ -40,16 +41,25 @@ from . import coords                                          # noqa: E402
 _ENGINE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine")
 
 # Default latency compensation (decision ticks) per input path. The memory path
-# reads fresh via the 6809 list-walk (~0.25 ticks stale after frame-sync); the
-# vision path adds render + capture + inference age (~1.0 tick).
+# reads fresh via the 6809 list-walk (~0.25 ticks stale after frame-sync). The
+# vision figure was hand-set to 1.0 until 2026-07-28; the onboard latency
+# calibrator measures the pipeline at 0.21-0.30 ticks live, and the hand-set
+# value over-extrapolated every threat by ~0.7 ticks (~9 px on a spark) — the
+# wrong-info-worse-than-none failure mode. Corrected to the measurement.
 DEFAULT_LAG_MEMORY = 0.25
-DEFAULT_LAG_VISION = 1.0
-# Player forward-prediction: the sent move takes ~1.8 frames to actuate; lead the
-# player position that far along the last command so we dodge from where the
-# player WILL be. 1.8 frames / 4 frames-per-tick = 0.45 ticks. Used on BOTH
-# paths (2026-07-08): the entire vision record campaign (W23 / S620,700) ran
-# with lead 0.45 — yolo5's Player detection (0.98 recall) is solid enough.
-DEFAULT_PLAYER_LEAD = 0.45
+DEFAULT_LAG_VISION = 0.3
+# Player forward-prediction: the sent move takes ~2 ticks (measured from
+# vision response) to actuate; lead the player position along the last
+# command so we dodge from where the player WILL be.
+#   memory: 1.8 frames / 4 frames-per-tick = 0.45 ticks (the W158 config).
+#   vision: the calibrator's act=2.0 already INCLUDES the vision pipeline
+#           age, so the correct lead is act − 0.5 (whole-tick quantization
+#           midpoint) = 1.5. Validated live 2026-07-29: max wave 14.6 → 18.0
+#           (p=0.003) vs the old shared 0.45 — the single biggest gameplay
+#           win of the vision campaign.
+DEFAULT_LEAD_MEMORY = 0.45
+DEFAULT_LEAD_VISION = 1.5
+DEFAULT_PLAYER_LEAD = DEFAULT_LEAD_MEMORY   # back-compat alias
 
 # The FSM's obs-limited slot selection (same category budgets as MAME play): the
 # planner only sees the nearest N of each threat family, mirroring the arcade
@@ -217,6 +227,11 @@ class ChampionBrain:
         self.coaster = ProjectileCoaster() if use_coaster else None
         if use_coaster and not _USER_PINNED_MARGINS:
             set_margins(*VISION_MARGINS)
+        # Vision path fires at the clearance-binding threat (kill the launcher
+        # — see set_fireplan's docstring for the measured win). Env-pinned
+        # VSEARCH_FIREPLAN always wins, for A/B.
+        if use_coaster and not _USER_PINNED_FIREPLAN:
+            set_fireplan(True)
         self.last_mv = 0
         self._setup_fsm(debug)
 
@@ -270,6 +285,19 @@ class ChampionBrain:
         mv = mv if mv >= 1 else 1
         fr = fr if fr >= 1 else mv
         return clearance_search(sprites, mv, fr)
+
+    def blind_tick(self, entities):
+        """Feed a tick where the PLAYER box was missed but enemies were seen.
+        Without this, tracking freezes on player-blind ticks and resumes a
+        tick stale with halved velocities (2026-07-28 fix): the coaster must
+        keep associating and ageing, and the velocity tracker must keep its
+        identity chain, even when no decision is made."""
+        cur = list(entities)
+        if self.coaster is not None:
+            proj = [e for e in cur if e[2] in ProjectileCoaster.NAMES]
+            cur = [e for e in cur if e[2] not in ProjectileCoaster.NAMES]
+            self.coaster.update(proj, None)
+        self.vt.velocities(cur)
 
     def decide(self, player_xy, entities):
         """player_xy = (px, py) planner; entities = [(px, py, name)] planner.

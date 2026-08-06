@@ -71,8 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
     vis = p.add_argument_group("vision (yolo)")
     vis.add_argument("--weights", default=None,
                      help=f"YOLO weights (default: bundled {os.path.basename(DEFAULT_WEIGHTS)})")
-    vis.add_argument("--conf", type=float, default=0.4,
-                     help="YOLO confidence floor (raised per-class internally)")
+    vis.add_argument("--conf", type=float, default=0.30,
+                     help="YOLO confidence floor (raised per-class internally). "
+                          "0.30 is the validated production setting; note it "
+                          "FLOORS the per-class gates, so lower values let the "
+                          "hand-tuned per-class table take effect instead")
     vis.add_argument("--track", action="store_true",
                      help="use ByteTrack temporal smoothing instead of per-frame predict")
     vis.add_argument("--player-hold", type=int, default=6,
@@ -82,9 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
     brn.add_argument("--hz", type=float, default=15.0,
                      help="decision rate (do not change: planner is tuned for 15)")
     brn.add_argument("--lag-ticks", type=float, default=None,
-                     help="latency extrapolation (default: 0.25 memory / 1.0 vision)")
+                     help="latency extrapolation (default: 0.25 memory / 0.3 vision)")
     brn.add_argument("--player-lead", type=float, default=None,
-                     help="player forward-prediction ticks (default: 0.45 memory / 0 vision)")
+                     help="player forward-prediction ticks "
+                          "(default: 0.45 memory / 1.5 vision)")
     brn.add_argument("--vel-ema", type=float, default=0.5,
                      help="velocity EMA alpha (1.0 = raw, lower = smoother)")
     brn.add_argument("--no-frame-sync", action="store_true",
@@ -143,9 +147,12 @@ def resolve_config(argv=None) -> argparse.Namespace:
         args.lag_ticks = (brain_mod.DEFAULT_LAG_MEMORY if args.input == "memory"
                           else brain_mod.DEFAULT_LAG_VISION)
     if args.player_lead is None:
-        # Lead 0.45 on both paths (2026-07-08): the vision record campaign
-        # (W23 / S620,700) ran with it — player detection is no longer noisy.
-        args.player_lead = brain_mod.DEFAULT_PLAYER_LEAD
+        # Per-path leads (2026-07-29 A/B, 30 games/arm): the vision path's
+        # calibrator measures actuation at 2.0 ticks INCLUDING pipeline age,
+        # so vision leads 1.5 (max wave 14.6 -> 18.0, p=0.003 vs the old
+        # shared 0.45); memory keeps the W158-validated 0.45.
+        args.player_lead = (brain_mod.DEFAULT_LEAD_MEMORY if args.input == "memory"
+                            else brain_mod.DEFAULT_LEAD_VISION)
     # Frame-sync only makes sense reading guest memory each tick.
     args.frame_sync = (args.input == "memory") and not args.no_frame_sync
     return args

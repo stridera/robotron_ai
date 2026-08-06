@@ -30,6 +30,17 @@ def set_margins(danger: float, margin: float) -> None:
     global CLEAR_DANGER, CLEAR_MARGIN
     CLEAR_DANGER = float(danger)
     CLEAR_MARGIN = float(margin)
+
+
+def set_fireplan(on: bool) -> None:
+    """Enable/disable fire-at-the-binding-threat after import. ChampionBrain
+    turns this ON for the vision path (2026-07-30, replicated 2026-07-31):
+    with ~2 ticks of actuation latency a close-fired spark arrives before any
+    dodge can act, so the only defence is killing the launcher — d/w 1.20 vs
+    1.38 (p=.027), max wave 21.9 vs 17.5 (p=.007), and the first positive net
+    life economy measured on vision. Memory input keeps its own default."""
+    global FIREPLAN
+    FIREPLAN = bool(on)
 # Least-bad surround escape (2026-07-05): when NO heading clears the safety margin
 # (fully boxed in), the old code falls back to the FSM move — which in a dense
 # swarm is STAY (stand still = the classic deep-wave death). Instead pick the
@@ -38,6 +49,10 @@ LEAST_BAD = os.environ.get("VSEARCH_LEAST_BAD", "0") == "1"
 ASMDYN = os.environ.get("VSEARCH_ASMDYN", "1") == "1"
 FIREPLAN = os.environ.get("VSEARCH_FIREPLAN", "0") == "1"
 FIREPLAN_HULK_R = float(os.environ.get("VSEARCH_FIREPLAN_HULK_R", "90"))
+# Per-class clearance weights for the two spark-band A/B knobs (2026-07-30).
+# Both measured FLAT at 1.15-2.4x on vision — kept as env knobs, not defaults.
+SPARK_W = float(os.environ.get("VSEARCH_W_SPARK", "1.8"))
+ENF_W = float(os.environ.get("VSEARCH_W_ENF", "1.3"))
 
 # Per-env-step player displacement (obs px) by server move dir 1..8, measured
 # 2026-06-28 at frameskip 4; scales linearly with frameskip (1px/frame per axis).
@@ -45,7 +60,43 @@ _FS_SCALE = int(os.environ.get("VSEARCH_FRAMESKIP", "4")) / 4.0
 DXY = {1: (0.0, -9.2), 2: (9.5, -9.2), 3: (9.5, 0.0), 4: (9.5, 9.2),
        5: (0.0, 9.2), 6: (-9.5, 9.2), 7: (-9.5, 0.0), 8: (-9.5, -9.2)}
 DXY = {d: (x * _FS_SCALE, y * _FS_SCALE) for d, (x, y) in DXY.items()}
+_DXY_NOMINAL = {d: v for d, v in DXY.items()}
 PX_MIN, PX_MAX, PY_MIN, PY_MAX = 10.0, 655.0, 10.0, 482.0
+
+# ── decision-tick rescaling (2026-07-28) ──────────────────────────────────
+# Every per-step constant here (DXY player displacement, the chase-speed
+# bands, the CLEAR_H horizon) is calibrated for ONE decision step = 66.7 ms
+# (15 Hz). If the live loop can't hold that — a slower host, or the real-
+# hardware path where HDMI capture + serial actuation cost more — the game
+# advances further per decision and every constant is silently wrong (an
+# 83 ms tick makes them 25% short). set_tick_scale(k) rescales for a step
+# k x the nominal duration: DXY x k, chase-speed bands x k, horizon
+# CLEAR_H / k (same look-ahead TIME). Driven by the harness TickClock from
+# the measured cadence; k == 1.0 (the deadline-held 15 Hz) is a no-op.
+TICK_SCALE = 1.0
+CLEAR_H_EFF = CLEAR_H
+
+
+def set_tick_scale(k: float) -> float:
+    """Rescale per-step kinematics for a decision tick k x the nominal 66.7 ms.
+    Returns the clamped k actually applied. DXY is mutated IN PLACE so modules
+    that did `from clearance_planner import DXY` see the update."""
+    global TICK_SCALE, CLEAR_H_EFF
+    k = min(max(float(k), 0.25), 4.0)
+    if abs(k - TICK_SCALE) < 1e-3:
+        return TICK_SCALE
+    TICK_SCALE = k
+    for d, (x, y) in _DXY_NOMINAL.items():
+        DXY[d] = (x * k, y * k)
+    CLEAR_H_EFF = int(min(max(round(CLEAR_H / k), 3), 12))
+    return k
+
+
+def _spd(spd, lo, hi):
+    """Clamp a measured per-step speed into a class's [lo, hi] band, with the
+    band scaled to the real tick duration."""
+    return max(lo * TICK_SCALE, min(spd, hi * TICK_SCALE))
+
 
 _FIRE_DIRS = (3, 4, 5, 6, 7, 8, 1, 2)   # compass by 45deg from East, screen y-down
 
@@ -70,15 +121,15 @@ def _classify_threat(name, vx, vy):
         if name in ("Mikey", "Mommy", "Daddy"):
             return 0.0, False, 0.0, False
         if name == "Hulk":
-            return 2.5, True, max(2.5, min(spd, 6.0)), False
+            return 2.5, True, _spd(spd, 2.5, 6.0), False
         if name == "Quark":
             return 2.0, False, 0.0, False
         if name in ("EnforcerBullet", "Spark", "CruiseMissile", "TankShell"):
             return 1.8, False, spd, False
         if name == "Grunt":
-            return 1.0, True, max(5.0, min(spd, 13.0)), False
+            return 1.0, True, _spd(spd, 5.0, 13.0), False
         if name in ("Brain", "Prog"):
-            return 1.2, True, max(4.0, min(spd, 12.0)), False
+            return 1.2, True, _spd(spd, 4.0, 12.0), False
         if name == "Electrode":
             return 0.8, False, 0.0, False
         return 1.0, False, spd, False
@@ -86,7 +137,7 @@ def _classify_threat(name, vx, vy):
         return 0.0, False, 0.0, False                # family — not lethal
     if name == "Hulk":
         # invincible pinning obstacle (30% of deaths) — wide berth, slow 4-dir mover
-        return 2.2, True, max(2.0, min(spd, 5.0)), False
+        return 2.2, True, _spd(spd, 2.0, 5.0), False
     if name == "Quark":
         # slow random wanderer, NO homing, <=~9.5px/step (asm:7201-7248)
         return 1.0, False, spd, False
@@ -96,17 +147,17 @@ def _classify_threat(name, vx, vy):
         return 1.8, False, spd, True
     if name == "CruiseMissile":
         # homes on the player, re-aims every <=8 ticks (asm:3082-3118)
-        return 1.6, True, max(6.0, min(spd, 14.0)), False
+        return 1.6, True, _spd(spd, 6.0, 14.0), False
     if name == "EnforcerBullet":
         # spark: ballistic + fixed curvature, never re-homes (asm:2082-2087)
-        return 1.8, False, spd, False
+        return SPARK_W, False, spd, False
     if name == "Enforcer":
         # dives at the player, velocity ∝ distance (asm:1933-1964)
-        return 1.3, True, max(3.0, min(spd, 22.0)), False
+        return ENF_W, True, _spd(spd, 3.0, 22.0), False
     if name == "Grunt":
-        return 1.0, True, max(5.0, min(spd, 13.0)), False   # 4px axis beeline
+        return 1.0, True, _spd(spd, 5.0, 13.0), False   # 4px axis beeline
     if name == "Prog":
-        return 1.1, True, max(4.0, min(spd, 12.0)), False
+        return 1.1, True, _spd(spd, 4.0, 12.0), False
     if name == "Brain":
         # chases the nearest HUMAN, not the player (asm:2466-2475)
         return 1.1, False, spd, False
@@ -177,7 +228,7 @@ def clearance_search(sprites, fsm_mv, first_fire):
     T = (np.array(xs), np.array(ys), np.array(vxs), np.array(vys),
          np.array(ws), np.array(ch, dtype=bool), np.array(sp),
          np.array(rf, dtype=bool))
-    clr = [_heading_clearance(px, py, T, d, CLEAR_H) for d in range(1, 9)]
+    clr = [_heading_clearance(px, py, T, d, CLEAR_H_EFF) for d in range(1, 9)]
     v_fsm = clr[fsm_mv - 1]
     if v_fsm >= CLEAR_DANGER:                      # FSM heading is safe enough — trust it
         return fsm_mv, first_fire
@@ -189,7 +240,7 @@ def clearance_search(sprites, fsm_mv, first_fire):
     else:
         best_d = fsm_mv
     if FIREPLAN:
-        _, bi = _heading_clearance(px, py, T, best_d, CLEAR_H, return_argmin=True)
+        _, bi = _heading_clearance(px, py, T, best_d, CLEAR_H_EFF, return_argmin=True)
         bx, by = float(T[0][bi]), float(T[1][bi])
         if nm[bi] != "Hulk" or ((bx - px) ** 2 + (by - py) ** 2) <= FIREPLAN_HULK_R ** 2:
             return best_d, _dir_toward(px, py, bx, by)

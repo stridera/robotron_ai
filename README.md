@@ -2,8 +2,9 @@
 
 A configurable **Robotron 2084 AI player**. One decision core (an evolved
 finite-state machine + a minimal-deviation clearance planner that reached
-**wave 138**) driven by swappable **input** and **output**, so the *same* bot
-plays on the **Xenia emulator** and on **real Xbox 360 hardware**.
+**wave 158** on memory input and **wave 55** on pure vision) driven by
+swappable **input** and **output**, so the *same* bot plays on the **Xenia
+emulator** and on **real Xbox 360 hardware**.
 
 ```
             INPUT (perception)                 BRAIN                OUTPUT (control)
@@ -19,6 +20,82 @@ it, so the input source is completely interchangeable.
 
 ---
 
+## 🎮 Super simple: run it on your Xbox, step by step
+
+No experience needed. Follow these in order.
+
+**What you need before starting**
+1. An **Xbox 360** with *Robotron: 2084* (the XBLA version), plugged into a TV.
+2. An **HDMI capture card** (a little USB box; a cheap ~$15 one works). It
+   splits or receives the Xbox's HDMI picture and shows up on the computer
+   like a webcam.
+3. The **serial controller box** (the custom device that plugs into a wired
+   Xbox controller and takes commands over USB). Note which COM port Windows
+   gives it (Device Manager → Ports → e.g. "COM3").
+4. A **Windows PC** with an NVIDIA graphics card (recommended) and
+   [Python 3.10 or newer](https://www.python.org/downloads/) installed —
+   during install, tick the box that says **"Add Python to PATH."**
+
+**Step 1 — Download the code**
+- Go to the GitHub page for this project.
+- Click the green **`<> Code`** button → **Download ZIP**.
+- Right-click the downloaded file → **Extract All…** → put it somewhere easy,
+  like `C:\robotron`.
+
+**Step 2 — Install (one time only)**
+- Open the extracted folder, click in the address bar of the window, type
+  `cmd`, and press Enter. A black window opens in the right place.
+- Copy-paste these two lines, pressing Enter after each. The second one
+  downloads a few GB and takes a while — that's normal:
+
+```bash
+python -m venv .venv
+.venv\Scripts\pip install -r robotron_ai\requirements.txt
+```
+
+**Step 3 — Plug things in**
+- HDMI capture card → PC (and Xbox video going into it).
+- Serial controller box → PC, and its controller plug → Xbox player-1 port.
+- Turn on the Xbox and start Robotron so you can see the game on screen.
+
+**Step 4 — Let the bot play**
+- In that same black window, paste:
+
+```bash
+.venv\Scripts\python -m robotron_ai --mode hardware --device 0 --port COM3
+```
+
+- Change `COM3` to your serial port from Device Manager. If you get a black
+  or wrong picture, try `--device 1` or `--device 2` (some capture cards show
+  up more than once).
+- Start a game on the Xbox (press Start on a normal controller, or add
+  `--start` to the command to have the bot mash Start+A itself).
+
+**What you should expect**
+- The first start takes ~30-60 seconds (the vision model warms up). Then the
+  player will start dodging, shooting, and rescuing the family on its own,
+  15 decisions per second.
+- It plays *well* — typically somewhere in **waves 15-25**, sometimes much
+  deeper (its record is wave 55). It will still die eventually; that's
+  Robotron.
+- Want to watch what it's "seeing"? Add `--visualize` to the command — a
+  window opens showing every enemy it detects and the direction it chose.
+- To stop it: click the black window and press **Ctrl+C**.
+
+**If something goes wrong**
+| Problem | Fix |
+|---|---|
+| `python` is not recognized | Reinstall Python, tick **Add to PATH** |
+| Picture is black / a desktop | Wrong capture device — try `--device 1`, `2`… |
+| `cannot open COM3` | Wrong port — check Device Manager → Ports |
+| Bot doesn't move | Is the game actually running? Is the controller box plugged into port 1? Try `--visualize` to see if it sees the player |
+| It's slow / stuttery | Close other heavy programs; a laptop without an NVIDIA GPU will struggle |
+
+That's the whole thing. Everything below is detail for people who want to
+tinker.
+
+---
+
 ## Two ways to run it
 
 | | **Xenia (emulator)** | **Real Xbox 360 hardware** |
@@ -27,6 +104,10 @@ it, so the input source is completely interchangeable.
 | Output | `vgamepad` (virtual pad) | `serial` (custom controller device) |
 | Game state | read from guest RAM | none — vision only |
 | Use case | development, best scores | play the real console |
+
+Best results on record: **memory** input W158 / S4,468,300; **vision** input
+W55 with repeated full clears (W40+ = every unique wave pattern beaten; the
+XBLA wave loop repeats 20-40 after that).
 
 ---
 
@@ -43,9 +124,9 @@ Notes:
 - **vgamepad** needs the free **ViGEmBus** driver installed (one-time) for the
   virtual pad to appear to Xenia.
 - **ultralytics** pulls in PyTorch; the first `yolo` run compiles kernels and is
-  slow to start (a few seconds), then runs at full rate.
-- A trained detector ships at `robotron_ai/weights/robotron.pt` — no training
-  needed to use the vision path.
+  slow to start, then runs at full rate.
+- A trained detector ships at `robotron_ai/weights/robotron.pt` (the production
+  `yolo6` model) — no training needed to use the vision path.
 
 ---
 
@@ -73,12 +154,7 @@ If the game is already in progress, add `--no-start` to skip menu navigation.
 
 ## Quickstart — real Xbox 360 hardware
 
-You need:
-- an **HDMI capture card** (appears as a webcam / cv2 video device), and
-- the **serial controller device** wired to the Xbox controller (the firmware
-  reads one byte per update — see *Serial protocol* below).
-
-Start the game on the console, then:
+See the **super simple** section above. Short version:
 
 ```powershell
 # HDMI capture on device 0, serial controller on COM3
@@ -107,12 +183,12 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--port COMx` | `COM3` | Serial port for the hardware controller |
 | `--baud N` | `9600` | Serial baud rate |
 | `--weights PATH` | bundled `robotron.pt` | YOLO detector weights |
-| `--conf F` | `0.4` | YOLO confidence floor (raised per-class internally) |
+| `--conf F` | `0.30` | YOLO confidence floor (floors the per-class gates) |
 | `--track` | off | ByteTrack temporal smoothing vs per-frame predict |
 | `--player-hold N` | `6` | Max blind frames to hold the last player position |
-| `--hz F` | `15` | Decision rate — **leave at 15**, the planner is tuned for it |
-| `--lag-ticks F` | `0.25` mem / `1.0` vis | Latency extrapolation |
-| `--player-lead F` | `0.45` mem / `0` vis | Player forward-prediction ticks |
+| `--hz F` | `15` | Decision rate — **leave at 15**; if the host can't hold it, the planner auto-rescales its kinematics to the measured cadence |
+| `--lag-ticks F` | `0.25` mem / `0.3` vis | Latency extrapolation (vision value is the live-calibrated measurement) |
+| `--player-lead F` | `0.45` mem / `1.5` vis | Player forward-prediction ticks (vision 1.5 validated: maxW 14.6→18.0, p=0.003) |
 | `--vel-ema F` | `0.5` | Velocity EMA smoothing (1.0 = raw) |
 | `--no-frame-sync` | off | Disable 60 Hz frame-sync (memory input only) |
 | `--loop` | off | Xenia: replay games back-to-back |
@@ -122,6 +198,22 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--simulate` | off | Don't open real devices — print output (testing) |
 | `--debug` | off | Verbose per-tick output |
 | `--config FILE` | — | JSON of defaults; command-line flags still win |
+
+Vision-path behaviour applied automatically (each individually A/B-validated;
+override with the matching env var only if you're experimenting):
+- **Fire-at-the-binding-threat** (`VSEARCH_FIREPLAN`): shoot the launcher
+  that's boxing you in — close-fired sparks arrive faster than any dodge can
+  react, so killing the source is the only defence. The single biggest vision
+  win (deaths/wave 1.20 vs 1.38, max wave 21.9 vs 17.5).
+- **Widened planner margins** (`VSEARCH_CLEAR_DANGER/MARGIN` 21/12): absorbs
+  vision tracking noise; memory keeps 18/10.
+- **Projectile track-and-coast**: fast projectiles are tracked and coasted
+  through detector misses. (Coasting *all* classes was tried and measured
+  worse — phantom threats make the bot timid and starve the rescue economy.)
+- **Deadline tick clock**: the loop holds a true 15 Hz; if your machine
+  can't, it rescales the planner's per-step kinematics to the real cadence
+  instead of silently mispredicting (this is what makes slower hardware rigs
+  behave correctly).
 
 ### Config file
 
@@ -133,8 +225,8 @@ it; the file overrides only the built-in defaults.
   "mode": "hardware",
   "device": 1,
   "port": "COM5",
-  "conf": 0.35,
-  "track": true
+  "conf": 0.30,
+  "visualize": true
 }
 ```
 
@@ -202,10 +294,10 @@ robotron_ai/
   brain.py        ChampionBrain: velocity + latency + FSM + clearance planner
   perception.py   MemoryPerception, VisionPerception, frame sources (window / HDMI)
   control.py      Controller ABC, VgamepadController, SerialController
-  harness.py      memory game loop (Xenia) + vision game loop (hardware) + menu nav
+  harness.py      TickClock + memory game loop (Xenia) + vision loop (hardware) + menu nav
   visualize.py    live annotated overlay window (--visualize)
   coords.py       coordinate transforms (game <-> screen px <-> planner px)
-  weights/        bundled trained YOLO detector (robotron.pt)
+  weights/        bundled trained YOLO detector (robotron.pt — the yolo6 model)
   engine/         the proven, tuned libraries (readers, FSM, planner) — not rewritten
 ```
 
@@ -226,5 +318,10 @@ reimplements their logic.
   Device Manager. The bot simulates output so you can verify decisions.
 - **HDMI device won't open** — try a different `--device` index (0, 1, 2…). Some
   cards expose multiple nodes.
-- **Vision misses enemies** — lower `--conf`, or retrain the detector on your own
-  capture (the per-class gates already favour recall on the deadly classes).
+- **Vision misses enemies** — the per-class gates already favour recall on the
+  deadly classes; effective recall near the player measures 0.96-0.98 with
+  tracking. If your capture looks different from Xenia output (odd scaler,
+  cropping), fix the capture first — retraining is almost never the answer.
+- **`[tick] OVERRUN` / cadence warnings** — the machine can't hold 15 Hz. The
+  planner auto-rescales so play stays correct, but a GPU-less laptop will be
+  noticeably weaker.

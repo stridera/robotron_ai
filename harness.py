@@ -10,9 +10,87 @@ and manage game lifecycle.
     wait_for_game_start  Navigate the Xenia XBLA menus to gameplay.
 """
 import time
+from collections import deque
 
 from . import coords
+from .engine import clearance_planner as _cp
 from .visualize import VizOverlay, dir_name
+
+
+class TickClock:
+    """Deadline-scheduled decision clock with measured-rate feedback
+    (ported from the dev tree, 2026-07-28 — measured 15.0 Hz with 0 overruns
+    in 3600 ticks vs the old open-loop tail sleep's silent drift).
+
+    Two jobs:
+      1. GUARANTEE the cadence: schedule against an absolute deadline, so a
+         slow tick is followed by a short sleep instead of permanent debt.
+         On an overrun, RESYNC rather than pay back — every kinematic
+         constant assumes THIS step covers one tick of game time; a 107 ms
+         tick followed by a 27 ms catch-up averages right and is wrong twice.
+      2. ADAPT when the cadence can't be held (real-hardware path: HDMI
+         capture + serial cost more than the emulator): feed the measured
+         period into clearance_planner.set_tick_scale(), which rescales the
+         per-step kinematics. A settled rolling MEDIAN drives this — an EMA
+         chases the GPU-warmup transient and oscillates.
+    """
+    SPIN = 0.001            # burn the last ms in a spin (sleep granularity)
+    ADAPT_DEADBAND = 0.08
+    ADAPT_WINDOW = 90
+    ADAPT_WARMUP = 60
+    ADAPT_EVERY = 45
+    WARN_EVERY = 10.0
+
+    def __init__(self, hz: float = 15.0, adapt: bool = True):
+        self.period = 1.0 / hz
+        self.nominal = 1.0 / 15.0     # the planner's calibration cadence
+        self.adapt = adapt
+        self.next = None
+        self.last = None
+        self.n = 0
+        self.n_over = 0
+        self.periods = deque(maxlen=900)
+        self._warned = 0.0
+        self._applied = 1.0
+        self._last_adapt = 0
+        if adapt:
+            _cp.set_tick_scale(1.0)   # fresh clock -> start from nominal
+
+    def wait(self):
+        """Call at the END of each tick body: sleeps to the deadline."""
+        now = time.perf_counter()
+        if self.next is None:
+            self.last = now
+            self.next = now + self.period
+            return
+        if now < self.next:
+            rem = self.next - now
+            if rem > self.SPIN:
+                time.sleep(rem - self.SPIN)
+            while time.perf_counter() < self.next:
+                pass
+            self.next += self.period
+        else:
+            self.n_over += 1
+            self.next = now + self.period            # resync, don't pay back
+            if time.time() - self._warned > self.WARN_EVERY:
+                self._warned = time.time()
+                print(f"[tick] OVERRUN {(now - self.next + self.period) * 1e3:.0f} ms "
+                      f"({self.n_over}/{self.n} ticks over)", flush=True)
+        t = time.perf_counter()
+        self.periods.append(t - self.last)
+        self.last = t
+        self.n += 1
+        if (self.adapt and self.n >= self.ADAPT_WARMUP
+                and self.n - self._last_adapt >= self.ADAPT_EVERY):
+            self._last_adapt = self.n
+            recent = sorted(list(self.periods)[-self.ADAPT_WINDOW:])
+            k = recent[len(recent) // 2] / self.nominal
+            if abs(k - self._applied) > self.ADAPT_DEADBAND:
+                self._applied = _cp.set_tick_scale(k)
+                print(f"[tick] sustained cadence {1.0 / (k * self.nominal):.1f} Hz "
+                      f"— rescaling planner kinematics x{self._applied:.2f}",
+                      flush=True)
 
 
 # ── Overlay builders (screen-pixel space) ───────────────────────────────────
@@ -106,7 +184,7 @@ def play_memory_game(brain, perception, controller, gsr, *,
     """Play one game with full memory-based bookkeeping. Returns
     (max_wave, max_score, deaths). `perception` supplies the decision input;
     it may read the same GameState (memory) or capture the screen (vision)."""
-    tick = 1.0 / hz
+    clock = TickClock(hz=hz)
     prev_wave = 0
     prev_lives = 0xFFFFFFFF
     prev_player_pos = (0, 0)
@@ -125,8 +203,6 @@ def play_memory_game(brain, perception, controller, gsr, *,
     max_score = 0
 
     while True:
-        t0 = time.time()
-
         if frame_sync:
             # Phase-lock to the 60Hz frame counter: spin until it ticks over, then
             # read immediately (clean post-update window, deterministic ~1-frame
@@ -145,7 +221,7 @@ def play_memory_game(brain, perception, controller, gsr, *,
             state = gsr.read(wait_new_frame=False)
 
         if state is None:
-            time.sleep(tick)
+            clock.wait()
             continue
 
         max_wave = max(max_wave, state.wave)
@@ -239,6 +315,10 @@ def play_memory_game(brain, perception, controller, gsr, *,
         else:
             obs = perception.perceive(state)
             if obs.player is None:                   # blind this tick
+                # Keep tracking alive on the enemies we DID see, or every
+                # track resumes a tick stale with a halved velocity.
+                if obs.entities:
+                    brain.blind_tick(obs.entities)
                 controller.neutral()
                 neutral = True
             else:
@@ -250,9 +330,7 @@ def play_memory_game(brain, perception, controller, gsr, *,
             _render_memory(visualizer, perception, backdrop, state,
                            cur_mv, cur_fr, deaths, neutral)
 
-        dt = time.time() - t0
-        if dt < tick:
-            time.sleep(tick - dt)
+        clock.wait()
 
 
 # ── Hardware game loop (vision only, no memory) ─────────────────────────────
@@ -263,7 +341,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     acts whenever the player is visible; goes neutral when it isn't. No game-state
     memory is available, so there is no death/wave/score tracking — the game is
     started manually (or with --start) and the bot simply keeps playing."""
-    tick = 1.0 / hz
+    clock = TickClock(hz=hz)
     if start_seq:
         print("[harness] blind start sequence (Start, then A x4)...")
         controller.press_start()
@@ -274,11 +352,12 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     print(f"[harness] vision loop running at {hz:.0f} Hz - Ctrl+C to stop")
     blind = 0
     while True:
-        t0 = time.time()
         obs = perception.perceive(None)
         cur_mv = cur_fr = 0
         if obs.player is None:
             blind += 1
+            if obs.entities:
+                brain.blind_tick(obs.entities)   # keep tracks ageing
             controller.neutral()
         else:
             blind = 0
@@ -289,6 +368,4 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                       f"n={len(obs.entities)} mv={cur_mv} fr={cur_fr}")
         if visualizer is not None and visualizer.enabled:
             _render_vision(visualizer, perception, cur_mv, cur_fr, blind)
-        dt = time.time() - t0
-        if dt < tick:
-            time.sleep(tick - dt)
+        clock.wait()

@@ -198,19 +198,34 @@ class VisionPerception(Perception):
                                     tracker="bytetrack.yaml", verbose=False)[0]
         return self.model.predict(frame, conf=self.base_conf, verbose=False)[0]
 
+    def _rows(self, boxes):
+        """(class_name, conf, cx, cy, w, h) per box. Indexing an ultralytics
+        Boxes per-box forces a GPU->CPU sync for EVERY field of every box —
+        measured at 6.7 ms/tick on the dev tree (a tenth of the tick budget
+        spent marshalling numbers). Pull the three tensors across once and
+        iterate in numpy. Falls back to per-box attribute access so tests can
+        feed plain fake boxes."""
+        cls_t = getattr(boxes, "cls", None)
+        if cls_t is not None and hasattr(cls_t, "cpu"):
+            cls_a = cls_t.cpu().numpy().astype(int)
+            conf_a = boxes.conf.cpu().numpy()
+            xy_a = boxes.xywh.cpu().numpy()
+            return [(self.names[int(c)], float(f), float(b[0]), float(b[1]),
+                     float(b[2]), float(b[3]))
+                    for c, f, b in zip(cls_a, conf_a, xy_a)]
+        return [(self.names[int(b.cls[0])], float(b.conf[0]),
+                 float(b.xywh[0][0]), float(b.xywh[0][1]),
+                 float(b.xywh[0][2]), float(b.xywh[0][3])) for b in boxes]
+
     def _parse_boxes(self, boxes):
         """boxes -> (player_xy|None, entities, viz_boxes, player_px). The first
         two are in planner space (the brain's frame); viz_boxes/player_px are in
         SCREEN pixels for the overlay. Side-effect free (unit-testable)."""
         player, best_pconf, ents = None, 0.0, []
         viz_boxes, player_px = [], None
-        for box in boxes:
-            cls = self.names[int(box.cls[0])]
-            conf = float(box.conf[0])
+        for cls, conf, cx, cy, bw, bh in self._rows(boxes):
             if conf < self.cls_conf.get(cls, 1.0):     # per-class gate
                 continue
-            cx, cy = float(box.xywh[0][0]), float(box.xywh[0][1])
-            bw, bh = float(box.xywh[0][2]), float(box.xywh[0][3])
             gx, gy = coords.px_to_game(cx, cy)
             if cls == 'Player':
                 if conf > best_pconf:                  # keep only the best player
