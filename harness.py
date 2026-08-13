@@ -92,6 +92,17 @@ class TickClock:
                       f"— rescaling planner kinematics x{self._applied:.2f}",
                       flush=True)
 
+    def stats(self):
+        """Achieved cadence for the telemetry report."""
+        if not self.periods:
+            return {}
+        s = sorted(self.periods)
+        import statistics
+        return {'hz': round(1.0 / statistics.mean(s), 2),
+                'p90_ms': round(s[int(len(s) * 0.9)] * 1e3, 1),
+                'overruns': self.n_over, 'ticks': self.n,
+                'k_applied': round(self._applied, 3)}
+
 
 # ── Overlay builders (screen-pixel space) ───────────────────────────────────
 def _render_memory(viz, perception, backdrop, state, mv, fr, deaths, neutral):
@@ -333,17 +344,85 @@ def play_memory_game(brain, perception, controller, gsr, *,
         clock.wait()
 
 
+# ── Hardware menu navigation (vision-guarded) ───────────────────────────────
+def _sense_in_game(perception, hud_reader, seconds=3.0, hz=5.0):
+    """True if the HUD is readable at any point in the window. The HUD
+    FLASHES, so a single blank frame means nothing — but across 3 s the duty
+    cycle guarantees several valid reads whenever a game is actually on."""
+    t_end = time.time() + seconds
+    while time.time() < t_end:
+        perception.perceive(None)
+        frame = getattr(perception, "last_frame", None)
+        if frame is not None:
+            r = hud_reader.read(frame)
+            if r['score'] is not None or r['wave'] is not None:
+                return True
+        time.sleep(1.0 / hz)
+    return False
+
+
+def ensure_game_running(perception, hud_reader, controller,
+                        attempts: int = 8) -> bool:
+    """Get a game running on REAL HARDWARE without ever navigating blind.
+
+    The hazard (why this replaces the blind Start+A mash): pressing Start
+    DURING a game opens the pause menu, and blind A presses then activate
+    whatever is highlighted — on some screens that reaches settings or 'exit
+    game'. So: sense first, and only press when the HUD has been absent for
+    a full flash-tolerant window.
+
+    Button safety model for this game's menu tree:
+      * IN GAME (HUD readable)  -> press NOTHING.
+      * attract / game-over     -> Start exits the attract loop; the XBLA
+        chooser is 'A = One Player Start, B = Exit Game', so A starts and
+        we NEVER send B (or Back) from this function.
+      * worst case (mis-sensed and Start paused a live game): the pause
+        menu's default item is Resume, so the next A press un-pauses —
+        the sequence is self-correcting rather than destructive.
+    """
+    if _sense_in_game(perception, hud_reader):
+        print("[harness] game already running — not touching the controls")
+        return True
+    print("[harness] no HUD for 3s — starting a game (Start, then A only)")
+    controller.press_start()
+    time.sleep(2.0)
+    for i in range(attempts):
+        if _sense_in_game(perception, hud_reader, seconds=2.5):
+            print("[harness] gameplay confirmed (HUD readable)")
+            return True
+        controller.press_a()
+        time.sleep(1.0)
+    up = _sense_in_game(perception, hud_reader, seconds=3.0)
+    if not up:
+        print("[harness] WARNING: could not confirm gameplay — leaving the "
+              "controls alone (check the TV; the bot will play if a game "
+              "appears)")
+    return up
+
+
 # ── Hardware game loop (vision only, no memory) ─────────────────────────────
 def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                      start_seq: bool = False, debug: bool = False,
-                     visualizer=None):
+                     visualizer=None, bookkeeper=None, hud_reader=None,
+                     loop_games: bool = False, telemetry=None):
     """Minimal loop for real hardware. Runs until interrupted (Ctrl+C). Plans and
-    acts whenever the player is visible; goes neutral when it isn't. No game-state
-    memory is available, so there is no death/wave/score tracking — the game is
-    started manually (or with --start) and the bot simply keeps playing."""
+    acts whenever the player is visible; goes neutral when it isn't.
+
+    Game state comes from HUD OCR when a font is available (hud_reader +
+    bookkeeper): score/wave/lives are read off the video feed each tick, giving
+    wave lines in the console, death detection via the lives icons, and a wave
+    log robotron/ab_yolo.py can analyse — the same bookkeeping the emulator
+    gets from guest RAM, minus nothing the tuning loop needs."""
     clock = TickClock(hz=hz)
-    if start_seq:
-        print("[harness] blind start sequence (Start, then A x4)...")
+    if hud_reader is not None:
+        # Vision-guarded navigation: senses before pressing anything. Runs
+        # even without --start — it's a no-op when a game is already on.
+        ensure_game_running(perception, hud_reader, controller)
+    elif start_seq:
+        # No HUD font -> the old blind sequence, only on explicit request.
+        print("[harness] BLIND start sequence (no HUD font to sense with) — "
+              "Start, then A x4. Don't use this while a game is running: "
+              "Start pauses and A presses navigate the pause menu.")
         controller.press_start()
         time.sleep(1.5)
         for _ in range(4):
@@ -351,21 +430,51 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             time.sleep(1.0)
     print(f"[harness] vision loop running at {hz:.0f} Hz - Ctrl+C to stop")
     blind = 0
-    while True:
-        obs = perception.perceive(None)
-        cur_mv = cur_fr = 0
-        if obs.player is None:
-            blind += 1
-            if obs.entities:
-                brain.blind_tick(obs.entities)   # keep tracks ageing
-            controller.neutral()
-        else:
-            blind = 0
-            cur_mv, cur_fr = brain.decide(obs.player, obs.entities)
-            controller.move_shoot(cur_mv, cur_fr)
-            if debug:
-                print(f"[vision] p=({obs.player[0]:.0f},{obs.player[1]:.0f}) "
-                      f"n={len(obs.entities)} mv={cur_mv} fr={cur_fr}")
-        if visualizer is not None and visualizer.enabled:
-            _render_vision(visualizer, perception, cur_mv, cur_fr, blind)
-        clock.wait()
+    hud_every = max(1, int(hz / 5))     # OCR ~5x/s is plenty for bookkeeping
+    n = 0
+    try:
+        while True:
+            n += 1
+            obs = perception.perceive(None)
+            frame = getattr(perception, "last_frame", None)
+            if telemetry is not None:
+                telemetry.frame(frame)
+            if (hud_reader is not None and bookkeeper is not None
+                    and n % hud_every == 0 and frame is not None):
+                r = hud_reader.read(frame)
+                bookkeeper.feed(r)
+                if telemetry is not None:
+                    telemetry.hud(r, frame)
+                # Deaths need no input (the game respawns automatically; the
+                # bookkeeper counts them from the lives icons). GAME OVER is
+                # the only state needing action: restart via the same vision-
+                # guarded navigator, which presses nothing until the HUD has
+                # been gone for a full sensing window.
+                if bookkeeper.game_over_fired and loop_games:
+                    controller.neutral()
+                    brain.reset()
+                    perception.reset()
+                    ensure_game_running(perception, hud_reader, controller)
+            cur_mv = cur_fr = 0
+            if obs.player is None:
+                blind += 1
+                if obs.entities:
+                    brain.blind_tick(obs.entities)   # keep tracks ageing
+                controller.neutral()
+            else:
+                blind = 0
+                cur_mv, cur_fr = brain.decide(obs.player, obs.entities)
+                controller.move_shoot(cur_mv, cur_fr)
+                if debug:
+                    print(f"[vision] p=({obs.player[0]:.0f},{obs.player[1]:.0f}) "
+                          f"n={len(obs.entities)} mv={cur_mv} fr={cur_fr}")
+            if telemetry is not None:
+                telemetry.tick(cur_mv, obs.player,
+                               getattr(perception, "last_boxes", None), frame)
+            if visualizer is not None and visualizer.enabled:
+                _render_vision(visualizer, perception, cur_mv, cur_fr, blind)
+            clock.wait()
+    finally:
+        # Ctrl+C included: the friend's report must survive any exit.
+        if telemetry is not None:
+            telemetry.finalize(tick_stats=clock.stats())

@@ -96,7 +96,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = p.add_argument_group("run")
     run.add_argument("--loop", action="store_true",
-                     help="xenia: replay games back-to-back")
+                     help="replay games back-to-back (hardware: auto-restart "
+                          "after game over via the vision-guarded navigator)")
     run.add_argument("--no-start", action="store_true",
                      help="xenia: skip menu navigation (game already running)")
     run.add_argument("--start", action="store_true",
@@ -107,6 +108,13 @@ def build_parser() -> argparse.ArgumentParser:
                           "sprite boxes, player, threat vectors, and the chosen "
                           "move/fire (debug/demo). q or close to hide.")
     run.add_argument("--debug", action="store_true", help="verbose per-tick output")
+    run.add_argument("--no-hud", action="store_true",
+                     help="hardware: disable HUD OCR bookkeeping (score/wave/"
+                          "death tracking read off the video feed)")
+    run.add_argument("--hud-log", default=None,
+                     help="hardware: per-wave JSONL path for HUD bookkeeping "
+                          "(default: robotron_ai/logs/hud_waves.jsonl; "
+                          "analysable with robotron/ab_yolo.py --log)")
     return p
 
 
@@ -204,9 +212,46 @@ def main(argv=None) -> None:
     try:
         if cfg.mode == "hardware":
             perception = _build_perception(cfg)
+            # Telemetry is always on for hardware: the rig owner just sends
+            # back logs/hardware_report/ and it answers the port questions
+            # (act latency, cadence, capture pacing, detection/HUD health,
+            # geometry) without them needing to know what any of it means.
+            from .engine.clearance_planner import DXY
+            from .telemetry import HardwareTelemetry
+            telemetry = HardwareTelemetry(DXY)
+            hud_reader = bookkeeper = None
+            if not cfg.no_hud:
+                from . import hud_ocr
+                if os.path.exists(hud_ocr.DEFAULT_FONT):
+                    hud_reader = hud_ocr.HudReader()
+                    log = cfg.hud_log or os.path.join(_PKG_DIR, "logs",
+                                                      "hud_waves.jsonl")
+
+                    def _ev(kind, **kw):
+                        if kind == 'game_over':
+                            telemetry.game_over(**kw)
+                        if kind == 'wave_end':
+                            print(f"[hud] === WAVE {kw['wave']} done ===  "
+                                  f"deaths {kw['deaths']}  score +{kw['score']}")
+                        elif kind == 'death':
+                            print(f"[hud]  ** DIED #{kw['deaths']} **  "
+                                  f"W{kw['wave']}")
+                        elif kind == 'game_over':
+                            print(f"[hud] GAME OVER  W{kw['wave']} "
+                                  f"S{kw['score']} D={kw['deaths']}")
+                        elif kind == 'new_game':
+                            print("[hud] new game detected")
+                    bookkeeper = hud_ocr.VisionBookkeeper(log_path=log,
+                                                          on_event=_ev)
+                    print(f"[cli] HUD OCR bookkeeping on — wave log: {log}")
+                else:
+                    print("[cli] no HUD font (weights/hud_font.npz) — "
+                          "running without score/wave bookkeeping")
             harness.play_vision_game(brain, perception, controller,
                                      hz=cfg.hz, start_seq=cfg.start, debug=cfg.debug,
-                                     visualizer=visualizer)
+                                     visualizer=visualizer,
+                                     bookkeeper=bookkeeper, hud_reader=hud_reader,
+                                     loop_games=cfg.loop, telemetry=telemetry)
         else:
             # Xenia: memory bookkeeping harness (works for memory OR vision input).
             from .engine.game_state import GameStateReader

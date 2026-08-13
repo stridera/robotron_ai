@@ -91,6 +91,13 @@ python -m venv .venv
 | Bot doesn't move | Is the game actually running? Is the controller box plugged into port 1? Try `--visualize` to see if it sees the player |
 | It's slow / stuttery | Close other heavy programs; a laptop without an NVIDIA GPU will struggle |
 
+**One more thing — send back the report.** While it plays, the bot writes a
+diagnostics folder at `robotron_ai\logs\hardware_report\` (a small
+`report.json` plus 2-3 screenshots). When you're done playing, **zip that
+folder and send it back** — it automatically answers all the calibration
+questions (control latency, capture quality, timing) so the next version can
+be tuned for your exact setup. You don't need to read or understand it.
+
 That's the whole thing. Everything below is detail for people who want to
 tinker.
 
@@ -166,6 +173,17 @@ it plans and acts whenever it can see the player, and goes neutral when it
 can't. Start the game yourself, or pass `--start` to have it blindly press
 Start + A a few times first. Stop with `Ctrl+C`.
 
+Score, wave, deaths and game-over are still tracked — read **off the video
+feed** by HUD OCR (template matching against the game's own bitmap fonts,
+auto-harvested on the emulator with memory ground truth and shipped at
+`weights/hud_font.npz`). Validated against guest RAM live: wave 93% coverage /
+99% accuracy, score ~90% per-frame with monotonic guards on top. You get live
+wave lines in the console and a per-wave JSONL (`--hud-log`) in the same
+shape the emulator harness writes, so `robotron/ab_yolo.py --log <file>` can
+analyse and A/B hardware runs exactly like emulator runs. `--no-hud`
+disables it. Known limit: the lives-icon row caps at 8 icons, so deaths from
+a 9+ life bank don't register — rare outside marathon emulator runs.
+
 ---
 
 ## Configuration
@@ -194,6 +212,8 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--loop` | off | Xenia: replay games back-to-back |
 | `--no-start` | off | Xenia: skip menu navigation |
 | `--start` | off | Hardware: blind start-button sequence first |
+| `--no-hud` | off | Hardware: disable HUD OCR score/wave/death tracking |
+| `--hud-log PATH` | `logs/hud_waves.jsonl` | Hardware: per-wave JSONL from HUD OCR (ab_yolo-compatible) |
 | `--visualize` / `--show-overlay` | off | Live annotated overlay window (see below) |
 | `--simulate` | off | Don't open real devices — print output (testing) |
 | `--debug` | off | Verbose per-tick output |
@@ -296,8 +316,9 @@ robotron_ai/
   control.py      Controller ABC, VgamepadController, SerialController
   harness.py      TickClock + memory game loop (Xenia) + vision loop (hardware) + menu nav
   visualize.py    live annotated overlay window (--visualize)
+  hud_ocr.py      HUD OCR: score/wave/lives off the video feed + bookkeeping
   coords.py       coordinate transforms (game <-> screen px <-> planner px)
-  weights/        bundled trained YOLO detector (robotron.pt — the yolo6 model)
+  weights/        bundled YOLO detector (robotron.pt — yolo6) + HUD font (hud_font.npz)
   engine/         the proven, tuned libraries (readers, FSM, planner) — not rewritten
 ```
 

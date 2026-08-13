@@ -254,15 +254,18 @@ class VisionPerception(Perception):
 
     def perceive(self, state) -> Observation:
         frame = self.source.read()
+        # last_frame is kept unconditionally (a reference, not a copy): the
+        # HUD bookkeeper reads score/wave from it on the hardware path.
+        self.last_frame = frame
         if frame is None:
             if self.collect_viz:
-                self.last_frame, self.last_boxes, self.last_player_px = None, [], None
+                self.last_boxes, self.last_player_px = [], None
             return Observation(None, [])
         res = self._infer(frame)
         player, ents, viz_boxes, player_px = self._parse_boxes(res.boxes)
-        if self.collect_viz:
-            self.last_frame = frame
-            self.last_boxes = viz_boxes
-            self.last_player_px = player_px
+        # Boxes/player are kept unconditionally too — telemetry consumes them
+        # on the hardware path; the overlay just reads the same fields.
+        self.last_boxes = viz_boxes
+        self.last_player_px = player_px
         player = self._resolve_player(player)
         return Observation(player, ents)
