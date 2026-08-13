@@ -1,0 +1,63 @@
+{
+ "schema": "robotron_ai.hardware_report.v1",
+ "started_utc": "2026-08-13 07:29:13",
+ "elapsed_s": 60.0,
+ "act_ticks": {
+  "median": 2.0,
+  "n": 53,
+  "p90": 2.0
+ },
+ "frames": {
+  "delivered_hz": 13.68,
+  "duplicate_frac": 0.4665
+ },
+ "detection": {
+  "player_visible_frac": 0.8782,
+  "blind_streaks": {
+   "7": 1,
+   "9": 1,
+   "11": 1,
+   "13": 1,
+   "20": 2
+  },
+  "boxes_per_min": {
+   "C": 2842.7,
+   "E": 3768.3,
+   "F": 1415.3,
+   "FB": 599.7,
+   "G": 2404.9,
+   "H": 6463.0,
+   "Q": 905.6,
+   "S": 1226.4,
+   "T": 1883.1,
+   "TS": 617.7
+  }
+ },
+ "player_bounds_planner_px": {
+  "min": [
+   80.6,
+   84.2
+  ],
+  "max": [
+   664.3,
+   492.3
+  ],
+  "expected": [
+   [
+    0,
+    0
+   ],
+   [
+    665,
+    492
+   ]
+  ]
+ },
+ "hud": {
+  "coverage": 0.8901,
+  "conf_p10": 0.936,
+  "conf_p50": 0.954
+ },
+ "games": [],
+ "ticks": 821
+}

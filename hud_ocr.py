@@ -233,6 +233,12 @@ class HudReader:
                     else:
                         lives = 1 + max(0, int(round(
                             (extent - self.lives_icon_w) / self.lives_pitch)))
+                        if lives > 9:
+                            # The display never shows more than 8 icons — a
+                            # bigger value is a junk extent (sprite/explosion
+                            # spill), and the bookkeeper's delta filter can't
+                            # catch it on FIRST acceptance. Refuse it here.
+                            lives = None
                 else:
                     lives = 0
         if score is None and wave is None:
@@ -272,7 +278,11 @@ class VisionBookkeeper:
     # icon reads are the noisiest (death animations flash the row), and a
     # phantom lives-drop mints a phantom death, so lives demands the most.
     AGREE = {'score': 1, 'wave': 2, 'lives': 3}
-    MAX_JUMP = 100000        # max plausible score gain between reads
+    # Max plausible score gain between OCR reads (~200ms apart). The old
+    # 100000 let a single digit-inserted misread jump the score 10x, which
+    # self-heal later walked back — leaving a NEGATIVE wave delta in the log.
+    # Nothing legitimate earns more than a few thousand in 200ms.
+    MAX_JUMP = 25000
     # Sustained no-valid-read window before declaring game over. Must
     # comfortably exceed the worst legitimate blank stretch: HUD flash cycles
     # plus a death freeze plus a wave-transition splash can stack.
@@ -316,7 +326,9 @@ class VisionBookkeeper:
         rec = {'t': round(t, 2), 'game': self.game_id, 'arm': self.arm,
                'wave': wave_no, 'deaths': self.wave_deaths,
                'lives': self.lives,
-               'score': (self.score or 0) - self.wave_score0,
+               # Clamped: a mid-wave self-heal can leave score < wave_score0
+               # and a negative delta would poison downstream score stats.
+               'score': max(0, (self.score or 0) - self.wave_score0),
                'src': 'hud_ocr'}
         if self.log_path:
             try:
@@ -327,8 +339,16 @@ class VisionBookkeeper:
                 pass
         self.on_event('wave_end', **rec)
 
+    def _progressed(self):
+        """Has the CURRENT game demonstrably been played? New-game/game-over
+        transitions are only meaningful from a progressed game — without this
+        gate, a 100-point backward misread during W1 re-declares 'new game'
+        every few seconds."""
+        return self.max_wave >= 2 or self.max_score >= 10000
+
     def _new_game(self, t):
-        if self.wave is not None:
+        if self.wave is not None and not self.game_over_fired \
+                and self._progressed():
             self.on_event('game_over', game=self.game_id, wave=self.max_wave,
                           score=self.max_score, deaths=self.deaths)
         self.game_id = f"{int(t * 1000):x}"
@@ -360,7 +380,7 @@ class VisionBookkeeper:
                 # to qualify here; a garbage-read oscillation then declared
                 # 30 new games in 6 minutes. Misreads must never satisfy a
                 # state transition by ABSENCE of evidence.)
-                if s < 10000 and reading['wave'] == 1:
+                if s < 10000 and reading['wave'] == 1 and self._progressed():
                     self._new_game(t)
                     self.score = s
                 else:

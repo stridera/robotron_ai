@@ -140,10 +140,16 @@ def resolve_config(argv=None) -> argparse.Namespace:
     if args.mode == "hardware":
         if args.input == "memory":
             sys.exit("error: --mode hardware has no memory access; use --input yolo")
+        # serial + hdmi are the hardware DEFAULTS, but explicit flags win:
+        # `--mode hardware --source window --output vgamepad` runs the exact
+        # hardware code path (vision loop, HUD bookkeeping, guarded menu nav,
+        # telemetry) against the emulator — the end-to-end rehearsal rig.
         if args.output != "serial":
-            print("[cli] hardware mode: forcing --output serial")
-            args.output = "serial"
-        args.source = "hdmi"
+            print(f"[cli] hardware mode with --output {args.output} — "
+                  f"HARDWARE-SIM (emulator rehearsal), not a real rig")
+        if args.source != "hdmi":
+            print(f"[cli] hardware mode with --source {args.source} — "
+                  f"HARDWARE-SIM (emulator rehearsal), not a real rig")
     if args.input == "yolo" and args.weights is None:
         args.weights = DEFAULT_WEIGHTS
     if args.output == "serial" and args.port is None:

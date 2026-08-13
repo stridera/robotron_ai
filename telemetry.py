@@ -124,6 +124,7 @@ class HardwareTelemetry:
         self.games = []
         self._frames_saved = dict.fromkeys(self.SAMPLE_FRAMES, False)
         self._finalized = False
+        self._last_save = time.time()
 
     # ── hooks ──────────────────────────────────────────────────────────
     def frame(self, frame):
@@ -156,6 +157,15 @@ class HardwareTelemetry:
                 self._save_frame("player_blind", frame)
         for b in viz_boxes or []:
             self.cls_counts[b[4]] += 1
+        # Autosave: a hard kill or power loss on the rig must not lose the
+        # report (finalize() only runs on a clean exit).
+        if time.time() - self._last_save > 60:
+            self._last_save = time.time()
+            try:
+                with open(os.path.join(self.out, "report.json"), "w") as f:
+                    json.dump(self.report(), f, indent=1)
+            except OSError:
+                pass
 
     def hud(self, reading, frame):
         self.hud_reads += 1
