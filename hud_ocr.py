@@ -36,12 +36,18 @@ DEFAULT_FONT = os.path.join(_PKG_DIR, "weights", "hud_font.npz")
 # normalizing makes the match tolerant of the hardware chain's rescale.
 GRID_W, GRID_H = 12, 16
 
-# HUD strips at 720p (y0, y1, x0, x1) — measured 2026-08-05. The wave strip
-# must start BELOW the arena border (full-width bright rows at y626-631):
-# above it is playfield, and under a color-agnostic mask the sprites read as
-# glyphs. Wave text lives at y634-645; the copyright line starts at y666.
-SCORE_STRIP = (60, 105, 200, 900)
+# HUD strips at 720p (y0, y1, x0, x1) — measured 2026-08-05; geometry
+# confirmed IDENTICAL on real-Xbox capture (2026-08-16 hardware reports).
+# The wave strip must start BELOW the arena border (full-width bright rows at
+# y626-631): above it is playfield, and under a color-agnostic mask the
+# sprites read as glyphs. Wave text lives at y634-645; copyright from y666.
+# Score strip ends at 94: the arena begins at ~y95, and death-explosion
+# particles in rows 95-105 were adding phantom glyphs (seen on hardware).
+SCORE_STRIP = (60, 94, 200, 900)
 WAVE_STRIP = (632, 660, 200, 1080)
+# Lives icons live within ~8 icons of the last digit; farther bright content
+# in the score row is spill (particles, sprites at the arena top edge).
+LIVES_WINDOW_PX = 200
 
 
 # THE COLOR SCHEME CYCLES EVERY WAVE — HUD text included (white, cream, pale
@@ -52,8 +58,19 @@ WAVE_STRIP = (632, 660, 200, 1080)
 # invariant is BRIGHT ON BLACK, so the masks are color-agnostic brightness
 # masks; full-width separator rows (the arena border crossing a strip) are
 # suppressed because text rows never approach full-width ink.
-def _ink_mask(strip, thresh=160, row_kill=0.6):
-    m = strip.max(axis=2) > thresh
+def _ink_mask(strip, thresh=None, row_kill=0.6):
+    """Brightness mask with an ADAPTIVE threshold. Real-hardware capture
+    chains deliver limited-range video (white ≈ 235, and dim wave-color
+    schemes land lower still), so a fixed 160 gate can zero out entire waves
+    that the emulator read fine. Scale the gate to the strip's actual signal
+    level; the floor keeps noise out on truly-empty strips (blacks ≈ 16)."""
+    mx = strip.max(axis=2)
+    if thresh is None:
+        peak = int(mx.max())
+        if peak < 110:
+            return np.zeros(mx.shape, bool)      # nothing bright — no text
+        thresh = max(100, int(peak * 0.55))
+    m = mx > thresh
     full = m.mean(axis=1) > row_kill
     if full.any():
         m[full] = False
@@ -219,6 +236,7 @@ class HudReader:
                     if len(boxes) >= len(str(score)) else boxes[-1][2]
                 c_mask = _color_mask(s_strip)
                 c_mask[:, :last_digit_x + 4] = False
+                c_mask[:, last_digit_x + 4 + LIVES_WINDOW_PX:] = False
                 cols = np.where(c_mask.any(axis=0))[0]
                 if len(cols):
                     extent = int(cols[-1] - cols[0] + 1)
@@ -305,6 +323,7 @@ class VisionBookkeeper:
         self.game_over_fired = False
         self._pend = {}          # field -> (value, count)
         self._down = (None, 0)   # stuck-high score self-heal candidate
+        self._last_player_t = 0.0
 
     def _stable(self, field, value):
         """Hysteresis: return the newly-accepted value or None."""
@@ -359,9 +378,13 @@ class VisionBookkeeper:
         self.game_over_fired = False
         self.on_event('new_game', game=self.game_id)
 
-    def feed(self, reading, t=None):
-        """Feed one HudReader.read() result. Returns the current state dict."""
+    def feed(self, reading, t=None, player_visible=None):
+        """Feed one HudReader.read() result. `player_visible`: whether the
+        DETECTOR currently sees the player — used as a game-over veto.
+        Returns the current state dict."""
         t = t if t is not None else time.time()
+        if player_visible:
+            self._last_player_t = t
         if reading['score'] is not None or reading['wave'] is not None:
             self.last_valid_t = t
             self.game_over_fired = False
@@ -400,15 +423,23 @@ class VisionBookkeeper:
             if self.wave is None:
                 self.wave = w
                 self.wave_score0 = self.score or 0
-            elif w == self.wave + 1:
+            elif self.wave < w <= self.wave + 3:
+                # Forward by 1: normal. Forward by 2-3: we MISSED transitions
+                # (sparse reads on a slow rig) — resync rather than stick.
+                # First hardware round proved the +1-only rule pathological:
+                # one missed transition left the tracker on W2 while the game
+                # reached W8, misattributing every death after it.
                 self._log_wave(self.wave, t)
+                if w > self.wave + 1:
+                    print(f"[hud] wave resync {self.wave} -> {w} "
+                          f"(missed transitions)")
                 self.wave = w
                 self.wave_deaths = 0
                 self.wave_score0 = self.score or 0
             elif w == 1 and self.wave > 1:
                 self._new_game(t)
-            # any other jump = misread; hysteresis already filtered 1-frame
-            # noise, so just ignore non-adjacent values.
+            # bigger jumps = misread; hysteresis already filtered 1-frame
+            # noise, so ignore.
             self.max_wave = max(self.max_wave, self.wave or 0)
 
         # ── lives -> deaths ──
@@ -418,15 +449,21 @@ class VisionBookkeeper:
                 pass          # implausible jump — extent misread, ignore
             else:
                 if self.lives is not None and lv < self.lives:
-                    d = self.lives - lv
-                    self.deaths += d
-                    self.wave_deaths += d
+                    # Real deaths drop EXACTLY one life; a 2-drop is a noisy
+                    # extent settling (this is what produced the skipped
+                    # death numbers in the first hardware round). Count one.
+                    self.deaths += 1
+                    self.wave_deaths += 1
                     self.on_event('death', deaths=self.deaths, wave=self.wave)
                 self.lives = lv
 
-        # ── game over: HUD gone for a sustained stretch ──
+        # ── game over: HUD gone for a sustained stretch — AND the player is
+        # not visibly alive. First hardware round fired GAME OVER mid-play
+        # (patchy HUD reads); the detector seeing the player at 0.88-0.92 is
+        # a strong veto the OCR gap can't fake.
         if (self.last_valid_t is not None and not self.game_over_fired
                 and t - self.last_valid_t > self.GAME_OVER_S
+                and t - getattr(self, '_last_player_t', 0) > self.GAME_OVER_S
                 and self.wave is not None):
             self.game_over_fired = True
             self._log_wave(self.wave, t)

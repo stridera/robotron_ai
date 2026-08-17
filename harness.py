@@ -72,11 +72,24 @@ class TickClock:
             self.next += self.period
         else:
             self.n_over += 1
-            self.next = now + self.period            # resync, don't pay back
+            behind = now - self.next                 # BEFORE resync (the old
+            self.next = now + self.period            # order always printed -0)
             if time.time() - self._warned > self.WARN_EVERY:
                 self._warned = time.time()
-                print(f"[tick] OVERRUN {(now - self.next + self.period) * 1e3:.0f} ms "
-                      f"({self.n_over}/{self.n} ticks over)", flush=True)
+                print(f"[tick] OVERRUN {behind * 1e3:.0f} ms "
+                      f"({self.n_over}/{self.n + 1} ticks over)", flush=True)
+            # Standing advisory: if EVERY tick overruns, the requested rate is
+            # simply not achievable on this machine (usually CPU inference).
+            # The planner auto-rescales so play stays correct, but a matched
+            # --hz removes the churn.
+            if self.n_over == self.n + 1 and self.n_over == 150:
+                ach = 1.0 / (sum(self.periods) / len(self.periods))
+                print(f"[tick] NOTE: every tick overruns — this machine "
+                      f"achieves ~{ach:.0f} Hz, not the requested "
+                      f"{1.0 / self.period:.0f}. Play is auto-rescaled and "
+                      f"correct; pass --hz {ach:.0f} to stop this churn, or "
+                      f"speed up inference (GPU/torch-CUDA, --imgsz 640).",
+                      flush=True)
         t = time.perf_counter()
         self.periods.append(t - self.last)
         self.last = t
@@ -126,8 +139,14 @@ def _render_memory(viz, perception, backdrop, state, mv, fr, deaths, neutral):
                                  move_dir=mv, fire_dir=fr, hud=hud))
 
 
-def _render_vision(viz, perception, mv, fr, blind):
-    """Draw the overlay for the hardware path (vision only)."""
+def _render_vision(viz, perception, mv, fr, blind, plain=False):
+    """Draw the overlay for the hardware path (vision only). plain=True
+    shows the raw feed without boxes/arrows (--visualize-plain)."""
+    if plain:
+        viz.render(perception.last_frame, VizOverlay(entities=[], player=None,
+                                                     move_dir=0, fire_dir=0,
+                                                     hud=[]))
+        return
     boxes = perception.last_boxes or []
     hud = [f"mv {dir_name(mv)}   fire {dir_name(fr)}",
            f"entities {len(boxes)}",
@@ -346,12 +365,16 @@ def play_memory_game(brain, perception, controller, gsr, *,
 
 # ── Hardware menu navigation (vision-guarded) ───────────────────────────────
 def _sense_in_game(perception, hud_reader, seconds=3.0, hz=5.0):
-    """True if the HUD is readable at any point in the window. The HUD
-    FLASHES, so a single blank frame means nothing — but across 3 s the duty
-    cycle guarantees several valid reads whenever a game is actually on."""
+    """True if the game is demonstrably on: HUD readable OR the DETECTOR sees
+    the player. The HUD flashes (a single blank frame means nothing) and on
+    some rigs its reads are patchy, but the player detector runs at 0.88-0.92
+    visibility in-game — the OR of the two signals is what makes "don't touch
+    a live game" trustworthy on real hardware."""
     t_end = time.time() + seconds
     while time.time() < t_end:
-        perception.perceive(None)
+        obs = perception.perceive(None)
+        if obs is not None and obs.player is not None:
+            return True
         frame = getattr(perception, "last_frame", None)
         if frame is not None:
             r = hud_reader.read(frame)
@@ -362,49 +385,49 @@ def _sense_in_game(perception, hud_reader, seconds=3.0, hz=5.0):
 
 
 def ensure_game_running(perception, hud_reader, controller,
-                        attempts: int = 8) -> bool:
-    """Get a game running on REAL HARDWARE without ever navigating blind.
+                        attempts: int = 8, use_start: bool = False) -> bool:
+    """Get a game running by pressing A — no blocking pre-sense.
 
-    The hazard (why this replaces the blind Start+A mash): pressing Start
-    DURING a game opens the pause menu, and blind A presses then activate
-    whatever is highlighted — on some screens that reaches settings or 'exit
-    game'. So: sense first, and only press when the HUD has been absent for
-    a full flash-tolerant window.
+    Why blind-A is CORRECT here (two live lessons, one per direction):
+      * Hardware round 1: pressing START on the real console's shell backs
+        out of menus / lands in settings — so Start and B/Back are never
+        sent (`use_start` re-enables Start for rigs that need it).
+      * A "don't press while a game is visible" guard is UNSATISFIABLE and
+        unnecessary: Robotron's attract mode plays a real gameplay demo with
+        a real HUD and player sprite, indistinguishable per-frame from our
+        own game — the guard locked onto the attract screen forever (seen
+        live). And with an A-only policy there is nothing to guard: A does
+        NOTHING during gameplay (fire is the right stick), resumes from
+        pause, advances attract, and is 'One Player Start' on the chooser.
+        There is no screen on the A-path where pressing A hurts.
 
-    Button safety model for this game's menu tree:
-      * IN GAME (HUD readable)  -> press NOTHING.
-      * attract / game-over     -> Start exits the attract loop; the XBLA
-        chooser is 'A = One Player Start, B = Exit Game', so A starts and
-        we NEVER send B (or Back) from this function.
-      * worst case (mis-sensed and Start paused a live game): the pause
-        menu's default item is Resume, so the next A press un-pauses —
-        the sequence is self-correcting rather than destructive.
-    """
-    if _sense_in_game(perception, hud_reader):
-        print("[harness] game already running — not touching the controls")
-        return True
-    print("[harness] no HUD for 3s — starting a game (Start, then A only)")
-    controller.press_start()
-    time.sleep(2.0)
+    Sensing (HUD readable / player detected) is used only to STOP pressing
+    and report; a false confirmation from the attract demo self-corrects,
+    because the demo ends, the bookkeeper times out, and --loop calls this
+    again — retry-until-real converges where refuse-to-press stuck."""
+    if use_start:
+        controller.press_start()
+        time.sleep(2.0)
+    print("[harness] pressing A until a game is on (A is a no-op in-game)")
     for i in range(attempts):
-        if _sense_in_game(perception, hud_reader, seconds=2.5):
-            print("[harness] gameplay confirmed (HUD readable)")
-            return True
         controller.press_a()
         time.sleep(1.0)
-    up = _sense_in_game(perception, hud_reader, seconds=3.0)
-    if not up:
-        print("[harness] WARNING: could not confirm gameplay — leaving the "
-              "controls alone (check the TV; the bot will play if a game "
-              "appears)")
-    return up
+        if _sense_in_game(perception, hud_reader, seconds=2.0):
+            print("[harness] gameplay (or attract demo) visible — playing; "
+                  "if this was the demo, the game-over cycle retries")
+            return True
+    print("[harness] WARNING: nothing game-like visible after "
+          f"{attempts} A presses — check the TV/capture; will keep playing "
+          "if a game appears")
+    return False
 
 
 # ── Hardware game loop (vision only, no memory) ─────────────────────────────
 def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                      start_seq: bool = False, debug: bool = False,
                      visualizer=None, bookkeeper=None, hud_reader=None,
-                     loop_games: bool = False, telemetry=None):
+                     loop_games: bool = False, telemetry=None,
+                     menu_start: bool = False, visualize_plain: bool = False):
     """Minimal loop for real hardware. Runs until interrupted (Ctrl+C). Plans and
     acts whenever the player is visible; goes neutral when it isn't.
 
@@ -417,7 +440,8 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     if hud_reader is not None:
         # Vision-guarded navigation: senses before pressing anything. Runs
         # even without --start — it's a no-op when a game is already on.
-        ensure_game_running(perception, hud_reader, controller)
+        ensure_game_running(perception, hud_reader, controller,
+                            use_start=menu_start)
     elif start_seq:
         # No HUD font -> the old blind sequence, only on explicit request.
         print("[harness] BLIND start sequence (no HUD font to sense with) — "
@@ -442,7 +466,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             if (hud_reader is not None and bookkeeper is not None
                     and n % hud_every == 0 and frame is not None):
                 r = hud_reader.read(frame)
-                bookkeeper.feed(r)
+                bookkeeper.feed(r, player_visible=(obs.player is not None))
                 if telemetry is not None:
                     telemetry.hud(r, frame)
                 # Deaths need no input (the game respawns automatically; the
@@ -454,7 +478,8 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                     controller.neutral()
                     brain.reset()
                     perception.reset()
-                    ensure_game_running(perception, hud_reader, controller)
+                    ensure_game_running(perception, hud_reader, controller,
+                                        use_start=menu_start)
             cur_mv = cur_fr = 0
             if obs.player is None:
                 blind += 1
@@ -472,7 +497,8 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                 telemetry.tick(cur_mv, obs.player,
                                getattr(perception, "last_boxes", None), frame)
             if visualizer is not None and visualizer.enabled:
-                _render_vision(visualizer, perception, cur_mv, cur_fr, blind)
+                _render_vision(visualizer, perception, cur_mv, cur_fr, blind,
+                               plain=visualize_plain)
             clock.wait()
     finally:
         # Ctrl+C included: the friend's report must survive any exit.

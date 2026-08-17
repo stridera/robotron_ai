@@ -68,8 +68,13 @@ python -m venv .venv
 - Change `COM3` to your serial port from Device Manager. If you get a black
   or wrong picture, try `--device 1` or `--device 2` (some capture cards show
   up more than once).
-- Start a game on the Xbox (press Start on a normal controller, or add
-  `--start` to the command to have the bot mash Start+A itself).
+- The bot starts the game itself (it presses A, which is safe on every
+  screen). You can also just start a game yourself — extra A presses do
+  nothing during play.
+- **If it says it can only manage ~7 decisions per second** (a message about
+  CPU inference appears): either add `--imgsz 640` to the command (faster,
+  recommended) or add `--hz 6`. A PC with an NVIDIA graphics card and CUDA
+  PyTorch installed runs the full 15 without either.
 
 **What you should expect**
 - The first start takes ~30-60 seconds (the vision model warms up). Then the
@@ -211,7 +216,10 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--no-frame-sync` | off | Disable 60 Hz frame-sync (memory input only) |
 | `--loop` | off | Xenia: replay games back-to-back |
 | `--no-start` | off | Xenia: skip menu navigation |
-| `--start` | off | Hardware: blind start-button sequence first |
+| `--start` | off | Hardware: blind start-button sequence first (rarely needed — menu nav is automatic) |
+| `--menu-start` | off | Let menu nav press Start (default A-only: real-console Start backs out of menus) |
+| `--imgsz N` | model native (1280) | Inference size; `640` = ~3-4x faster on CPU rigs |
+| `--visualize-plain` | off | With `--visualize`: raw feed, no boxes/arrows |
 | `--no-hud` | off | Hardware: disable HUD OCR score/wave/death tracking |
 | `--hud-log PATH` | `logs/hud_waves.jsonl` | Hardware: per-wave JSONL from HUD OCR (ab_yolo-compatible) |
 | `--visualize` / `--show-overlay` | off | Live annotated overlay window (see below) |

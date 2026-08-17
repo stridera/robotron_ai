@@ -172,10 +172,16 @@ class VisionPerception(Perception):
     """Screen/HDMI frame -> YOLO detections -> Observation in planner space."""
 
     def __init__(self, source: FrameSource, weights: str, conf: float = 0.4,
-                 track: bool = False, max_player_hold: int = 6):
+                 track: bool = False, max_player_hold: int = 6,
+                 imgsz: int = None):
         from ultralytics import YOLO
         self.source = source
         self.model = YOLO(weights)
+        # Inference size. The model trains/serves at 1280 for small-sprite
+        # recall; on a CPU-only rig that costs ~150 ms/frame and caps the
+        # loop near 7 Hz. 640 is ~3-4x faster at some recall cost on the
+        # smallest sprites — the right trade when there is no CUDA GPU.
+        self.imgsz = imgsz
         self.names = self.model.names
         self.track = track
         self.cls_conf = {k: max(v, conf) for k, v in PER_CLASS_CONF.items()}
@@ -193,10 +199,15 @@ class VisionPerception(Perception):
         self._player_hold = 0
 
     def _infer(self, frame):
+        kw = {}
+        if self.imgsz:
+            kw['imgsz'] = self.imgsz
         if self.track:
             return self.model.track(frame, conf=self.base_conf, persist=True,
-                                    tracker="bytetrack.yaml", verbose=False)[0]
-        return self.model.predict(frame, conf=self.base_conf, verbose=False)[0]
+                                    tracker="bytetrack.yaml", verbose=False,
+                                    **kw)[0]
+        return self.model.predict(frame, conf=self.base_conf, verbose=False,
+                                  **kw)[0]
 
     def _rows(self, boxes):
         """(class_name, conf, cx, cy, w, h) per box. Indexing an ultralytics

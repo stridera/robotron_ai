@@ -80,6 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="use ByteTrack temporal smoothing instead of per-frame predict")
     vis.add_argument("--player-hold", type=int, default=6,
                      help="max blind frames to hold last player position")
+    vis.add_argument("--imgsz", type=int, default=None,
+                     help="inference size override (default: model native "
+                          "1280). On a CPU-only machine try 640: ~3-4x "
+                          "faster at some cost on the smallest sprites")
 
     brn = p.add_argument_group("brain")
     brn.add_argument("--hz", type=float, default=15.0,
@@ -102,6 +106,13 @@ def build_parser() -> argparse.ArgumentParser:
                      help="xenia: skip menu navigation (game already running)")
     run.add_argument("--start", action="store_true",
                      help="hardware: send a blind start-button sequence first")
+    run.add_argument("--menu-start", action="store_true",
+                     help="menu nav may press Start before the A presses "
+                          "(default OFF: real-hardware round 1 showed Start "
+                          "backs out of the console's menus; A alone is safe)")
+    run.add_argument("--visualize-plain", action="store_true",
+                     help="with --visualize: show the raw feed without "
+                          "detection boxes/arrows")
     run.add_argument("--visualize", "--show-overlay", action="store_true",
                      dest="visualize",
                      help="open a live window showing the feed with annotated "
@@ -193,7 +204,8 @@ def _build_perception(cfg):
         sys.exit(f"error: weights not found: {cfg.weights}")
     print(f"[cli] YOLO weights: {cfg.weights}")
     vp = perc.VisionPerception(source, cfg.weights, conf=cfg.conf,
-                               track=cfg.track, max_player_hold=cfg.player_hold)
+                               track=cfg.track, max_player_hold=cfg.player_hold,
+                               imgsz=cfg.imgsz)
     vp.collect_viz = cfg.visualize        # collect screen boxes for the overlay
     return vp
 
@@ -217,6 +229,18 @@ def main(argv=None) -> None:
 
     try:
         if cfg.mode == "hardware":
+            # CPU-inference check: the single biggest perf factor found in
+            # hardware round 1 (a CPU-bound rig caps near 7 Hz at imgsz 1280).
+            try:
+                import torch
+                if not torch.cuda.is_available():
+                    print("[cli] NOTE: torch has no CUDA — inference runs on "
+                          "CPU (~7 Hz ceiling at full resolution). Either "
+                          "install CUDA torch for your NVIDIA GPU, or run "
+                          "with --hz 6 (stable) and/or --imgsz 640 (faster, "
+                          "slightly worse on the smallest sprites).")
+            except Exception:
+                pass
             perception = _build_perception(cfg)
             # Telemetry is always on for hardware: the rig owner just sends
             # back logs/hardware_report/ and it answers the port questions
@@ -257,7 +281,9 @@ def main(argv=None) -> None:
                                      hz=cfg.hz, start_seq=cfg.start, debug=cfg.debug,
                                      visualizer=visualizer,
                                      bookkeeper=bookkeeper, hud_reader=hud_reader,
-                                     loop_games=cfg.loop, telemetry=telemetry)
+                                     loop_games=cfg.loop, telemetry=telemetry,
+                                     menu_start=cfg.menu_start,
+                                     visualize_plain=cfg.visualize_plain)
         else:
             # Xenia: memory bookkeeping harness (works for memory OR vision input).
             from .engine.game_state import GameStateReader
