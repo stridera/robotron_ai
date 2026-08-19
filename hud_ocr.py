@@ -295,7 +295,7 @@ class VisionBookkeeper:
     # safety comes from monotonicity + MAX_JUMP + self-heal instead. Lives
     # icon reads are the noisiest (death animations flash the row), and a
     # phantom lives-drop mints a phantom death, so lives demands the most.
-    AGREE = {'score': 1, 'wave': 2, 'lives': 3}
+    AGREE = {'score': 1, 'wave': 3, 'lives': 3}
     # Max plausible score gain between OCR reads (~200ms apart). The old
     # 100000 let a single digit-inserted misread jump the score 10x, which
     # self-heal later walked back — leaving a NEGATIVE wave delta in the log.
@@ -324,6 +324,10 @@ class VisionBookkeeper:
         self._pend = {}          # field -> (value, count)
         self._down = (None, 0)   # stuck-high score self-heal candidate
         self._last_player_t = 0.0
+        self._ng = 0             # new-game evidence accumulator
+        self._blind_t0 = None    # player-invisible streak start
+        self._last_death_t = 0.0
+        self._last_wave_t = 0.0
 
     def _stable(self, field, value):
         """Hysteresis: return the newly-accepted value or None."""
@@ -384,7 +388,25 @@ class VisionBookkeeper:
         Returns the current state dict."""
         t = t if t is not None else time.time()
         if player_visible:
+            # Death by disappearance: a real death hides the player for the
+            # ~2s explosion + respawn. A bounded invisible streak ENDING in a
+            # reappearance is a death the lives-row OCR may have missed
+            # (round 2: "does not log deaths that do happen"). Guards: not
+            # right after a wave change (transitions also hide the player),
+            # deduped against lives-drop deaths, bounded above so game-over
+            # blackouts don't count.
+            if (self._blind_t0 is not None and self.wave is not None
+                    and 1.5 <= t - self._blind_t0 <= 4.5
+                    and t - self._last_wave_t > 5.0
+                    and t - self._last_death_t > 4.0):
+                self.deaths += 1
+                self.wave_deaths += 1
+                self._last_death_t = t
+                self.on_event('death', deaths=self.deaths, wave=self.wave)
+            self._blind_t0 = None
             self._last_player_t = t
+        elif player_visible is False and self._blind_t0 is None:
+            self._blind_t0 = t
         if reading['score'] is not None or reading['wave'] is not None:
             self.last_valid_t = t
             self.game_over_fired = False
@@ -398,23 +420,15 @@ class VisionBookkeeper:
                 if s - self.score <= self.MAX_JUMP:
                     self.score = s
             elif s < self.score:
-                # Regression: real only on a fresh game — demand an EXPLICIT
-                # wave-1 read alongside the tiny score. (`wave is None` used
-                # to qualify here; a garbage-read oscillation then declared
-                # 30 new games in 6 minutes. Misreads must never satisfy a
-                # state transition by ABSENCE of evidence.)
-                if s < 10000 and reading['wave'] == 1 and self._progressed():
-                    self._new_game(t)
+                # Regression: self-heal a stuck-high score (a rare too-high
+                # misread that got accepted): a persistently repeated lower
+                # value is the truth. New-game detection is NOT triggered
+                # from here — see the evidence accumulator below.
+                v, k = self._down
+                self._down = (s, k + 1) if v == s else (s, 1)
+                if self._down[1] >= 4:
                     self.score = s
-                else:
-                    # Self-heal a stuck-high score (a rare too-high misread
-                    # that got accepted): a persistently repeated lower value
-                    # is the truth.
-                    v, k = self._down
-                    self._down = (s, k + 1) if v == s else (s, 1)
-                    if self._down[1] >= 4:
-                        self.score = s
-                        self._down = (None, 0)
+                    self._down = (None, 0)
             self.max_score = max(self.max_score, self.score or 0)
 
         # ── wave (stable, +1 steps or restart) ──
@@ -423,12 +437,14 @@ class VisionBookkeeper:
             if self.wave is None:
                 self.wave = w
                 self.wave_score0 = self.score or 0
-            elif self.wave < w <= self.wave + 3:
-                # Forward by 1: normal. Forward by 2-3: we MISSED transitions
-                # (sparse reads on a slow rig) — resync rather than stick.
-                # First hardware round proved the +1-only rule pathological:
-                # one missed transition left the tracker on W2 while the game
-                # reached W8, misattributing every death after it.
+            elif self.wave < w <= self.wave + 30:
+                # Forward by 1: normal. Any bigger forward jump: we MISSED
+                # transitions — resync. Hardware round 1 proved +1-only
+                # pathological (stuck on W2 while the game hit W8); round 2
+                # proved a +3 cap just recreates it at longer gaps (stuck at
+                # W2 during a W11 game). A STABLE repeated forward read (AGREE
+                # 3) is trustworthy at any plausible distance — misreads don't
+                # repeat three times running.
                 self._log_wave(self.wave, t)
                 if w > self.wave + 1:
                     print(f"[hud] wave resync {self.wave} -> {w} "
@@ -436,11 +452,30 @@ class VisionBookkeeper:
                 self.wave = w
                 self.wave_deaths = 0
                 self.wave_score0 = self.score or 0
-            elif w == 1 and self.wave > 1:
-                self._new_game(t)
-            # bigger jumps = misread; hysteresis already filtered 1-frame
-            # noise, so ignore.
+                self._last_wave_t = t
+            # NOTE: stable w==1 alone no longer declares a new game — wave
+            # "11" systematically reads as its prefix "1" when the second
+            # digit dips sub-threshold, and systematic misreads DO repeat
+            # (hardware round 2: a W11 game got reset mid-play). New games
+            # come only from the evidence accumulator below.
             self.max_wave = max(self.max_wave, self.wave or 0)
+
+        # ── new game: sustained, contradiction-free evidence ──
+        # A real fresh game shows wave 1 AND a small score for many seconds.
+        # A prefix misread ("11"->"1") co-occurs with score reads in the tens
+        # of thousands, which CONTRADICT and reset the count. Requires 5
+        # supporting reads with zero contradictions.
+        contradiction = ((reading['wave'] is not None and reading['wave'] != 1)
+                         or (reading['score'] is not None
+                             and reading['score'] >= 10000))
+        if contradiction:
+            self._ng = 0
+        elif reading['wave'] == 1:
+            self._ng += 1
+        if (self._ng >= 5 and self.wave is not None and self.wave > 1
+                and self._progressed()):
+            self._ng = 0
+            self._new_game(t)
 
         # ── lives -> deaths ──
         lv = self._stable('lives', reading['lives'])
@@ -448,12 +483,15 @@ class VisionBookkeeper:
             if self.lives is not None and abs(lv - self.lives) > 2:
                 pass          # implausible jump — extent misread, ignore
             else:
-                if self.lives is not None and lv < self.lives:
+                if self.lives is not None and lv < self.lives \
+                        and t - self._last_death_t > 4.0:
                     # Real deaths drop EXACTLY one life; a 2-drop is a noisy
                     # extent settling (this is what produced the skipped
-                    # death numbers in the first hardware round). Count one.
+                    # death numbers in the first hardware round). Count one;
+                    # dedup against a disappearance-death within 4s.
                     self.deaths += 1
                     self.wave_deaths += 1
+                    self._last_death_t = t
                     self.on_event('death', deaths=self.deaths, wave=self.wave)
                 self.lives = lv
 

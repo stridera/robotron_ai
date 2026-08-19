@@ -88,7 +88,7 @@ class TickClock:
                       f"achieves ~{ach:.0f} Hz, not the requested "
                       f"{1.0 / self.period:.0f}. Play is auto-rescaled and "
                       f"correct; pass --hz {ach:.0f} to stop this churn, or "
-                      f"speed up inference (GPU/torch-CUDA, --imgsz 640).",
+                      f"speed up inference (install CUDA torch).",
                       flush=True)
         t = time.perf_counter()
         self.periods.append(t - self.last)
@@ -427,7 +427,8 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                      start_seq: bool = False, debug: bool = False,
                      visualizer=None, bookkeeper=None, hud_reader=None,
                      loop_games: bool = False, telemetry=None,
-                     menu_start: bool = False, visualize_plain: bool = False):
+                     menu_start: bool = False, visualize_plain: bool = False,
+                     auto_lead: bool = False):
     """Minimal loop for real hardware. Runs until interrupted (Ctrl+C). Plans and
     acts whenever the player is visible; goes neutral when it isn't.
 
@@ -459,6 +460,27 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     try:
         while True:
             n += 1
+            # AUTO-LEAD (hardware round 2): the actuation latency in TICKS
+            # depends on the cadence this rig actually achieves (200 ms is 2
+            # ticks at 10 Hz but 3 at 15), so a fixed default is only right
+            # at one cadence. The act estimator measures it live from pure
+            # vision; feed it back, exactly like the emulator's autocal.
+            if (auto_lead and telemetry is not None and n % 300 == 0):
+                st = telemetry.act.stats()
+                if st['n'] >= 60 and st['median'] is not None:
+                    # Stability gate: apply only when two consecutive checks
+                    # agree (the median is whole-tick quantized, so one noisy
+                    # early estimate can swing the lead by a full tick).
+                    prev = getattr(play_vision_game, '_lead_prev', None)
+                    play_vision_game._lead_prev = st['median']
+                    if prev == st['median']:
+                        want = min(max(st['median'] - 0.5, 0.3), 2.5)
+                        if abs(want - brain.player_lead_ticks) >= 0.25:
+                            print(f"[brain] auto-lead: measured act "
+                                  f"{st['median']:.1f} ticks (n={st['n']}) "
+                                  f"-> player-lead {want:.2f} (was "
+                                  f"{brain.player_lead_ticks:.2f})")
+                            brain.player_lead_ticks = want
             obs = perception.perceive(None)
             frame = getattr(perception, "last_frame", None)
             if telemetry is not None:

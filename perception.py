@@ -115,10 +115,9 @@ class HdmiSource(FrameSource):
         ~10px projectile sprites stay as crisp as the training data.
     """
 
-    DRAIN_GRABS = 3   # grab()s per read to flush any backend queue
-
     def __init__(self, device=0, width: int = 1280, height: int = 720):
         import cv2
+        import threading
         self.cv2 = cv2
         self.cap = cv2.VideoCapture(device)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -127,14 +126,38 @@ class HdmiSource(FrameSource):
         self.w, self.h = width, height
         if not self.cap.isOpened():
             print(f"[hdmi] WARNING: capture device {device!r} did not open")
+        # BACKGROUND CAPTURE THREAD (hardware round 2). The old path drained
+        # the backend queue with 3 blocking grab()s per read; on a real card
+        # those block on frame boundaries and cost ~85 ms/tick — with GPU
+        # inference at ~15 ms, capture was the whole 10 Hz ceiling
+        # (delivered_hz == tick hz, duplicate_frac ~0.45 in the reports).
+        # A thread grabs continuously at the card's own rate and read() just
+        # takes the newest frame: the loop never blocks on the card, and the
+        # frame age is bounded by one card-frame instead of a queue.
+        self._lock = threading.Lock()
+        self._latest = None
+        self._running = True
+        self._thread = threading.Thread(target=self._pump, daemon=True)
+        self._thread.start()
+
+    def _pump(self):
+        while self._running:
+            ok = self.cap.grab()
+            if not ok:
+                import time
+                time.sleep(0.02)
+                continue
+            ok, frame = self.cap.retrieve()
+            if ok and frame is not None:
+                with self._lock:
+                    self._latest = frame
 
     def read(self):
-        # Drain stale frames so retrieve() returns the freshest one. grab()
-        # is cheap (no decode); only the final frame is decoded.
-        for _ in range(self.DRAIN_GRABS):
-            self.cap.grab()
-        ok, frame = self.cap.retrieve()
-        if not ok or frame is None:
+        with self._lock:
+            frame = self._latest       # newest frame, re-served if the card
+                                       # is slower than the loop (a duplicate
+                                       # tick beats a blind tick)
+        if frame is None:
             return None
         if frame.shape[1] != self.w or frame.shape[0] != self.h:
             frame = self.cv2.resize(frame, (self.w, self.h),
@@ -142,6 +165,7 @@ class HdmiSource(FrameSource):
         return frame
 
     def release(self) -> None:
+        self._running = False
         if self.cap:
             self.cap.release()
 

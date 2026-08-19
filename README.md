@@ -71,10 +71,11 @@ python -m venv .venv
 - The bot starts the game itself (it presses A, which is safe on every
   screen). You can also just start a game yourself — extra A presses do
   nothing during play.
-- **If it says it can only manage ~7 decisions per second** (a message about
-  CPU inference appears): either add `--imgsz 640` to the command (faster,
-  recommended) or add `--hz 6`. A PC with an NVIDIA graphics card and CUDA
-  PyTorch installed runs the full 15 without either.
+- **If a message about CPU inference appears** (no CUDA): install the GPU
+  version of PyTorch — this one command fixes it for NVIDIA cards:
+  `.venv\Scripts\pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130`
+  (Don't use `--imgsz 640` — it makes the bot misread the player as a
+  civilian and freeze.)
 
 **What you should expect**
 - The first start takes ~30-60 seconds (the vision model warms up). Then the

@@ -82,8 +82,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="max blind frames to hold last player position")
     vis.add_argument("--imgsz", type=int, default=None,
                      help="inference size override (default: model native "
-                          "1280). On a CPU-only machine try 640: ~3-4x "
-                          "faster at some cost on the smallest sprites")
+                          "1280). WARNING: 640 measured on hardware round 2 "
+                          "breaks classification (player read as Civilian, "
+                          "player_visible 0.20) — don't use it; fix speed "
+                          "with CUDA torch instead")
 
     brn = p.add_argument_group("brain")
     brn.add_argument("--hz", type=float, default=15.0,
@@ -171,6 +173,7 @@ def resolve_config(argv=None) -> argparse.Namespace:
     if args.lag_ticks is None:
         args.lag_ticks = (brain_mod.DEFAULT_LAG_MEMORY if args.input == "memory"
                           else brain_mod.DEFAULT_LAG_VISION)
+    args.auto_lead = False
     if args.player_lead is None:
         # Per-path leads (2026-07-29 A/B, 30 games/arm): the vision path's
         # calibrator measures actuation at 2.0 ticks INCLUDING pipeline age,
@@ -178,6 +181,13 @@ def resolve_config(argv=None) -> argparse.Namespace:
         # shared 0.45); memory keeps the W158-validated 0.45.
         args.player_lead = (brain_mod.DEFAULT_LEAD_MEMORY if args.input == "memory"
                             else brain_mod.DEFAULT_LEAD_VISION)
+        # No explicit --player-lead: REAL hardware rigs refine it live from
+        # the measured actuation latency (act in ticks varies with the
+        # achieved cadence, so no fixed default fits every rig). Gated to the
+        # hdmi source: the window-capture hardware-sim runs on the emulator,
+        # whose act=2.0/lead=1.5 is A/B-validated — a noisy early
+        # estimate must not override it (seen in rehearsal: early median 1.0).
+        args.auto_lead = (args.mode == "hardware" and args.source == "hdmi")
     # Frame-sync only makes sense reading guest memory each tick.
     args.frame_sync = (args.input == "memory") and not args.no_frame_sync
     return args
@@ -236,9 +246,11 @@ def main(argv=None) -> None:
                 if not torch.cuda.is_available():
                     print("[cli] NOTE: torch has no CUDA — inference runs on "
                           "CPU (~7 Hz ceiling at full resolution). Either "
-                          "install CUDA torch for your NVIDIA GPU, or run "
-                          "with --hz 6 (stable) and/or --imgsz 640 (faster, "
-                          "slightly worse on the smallest sprites).")
+                          "install CUDA torch for your NVIDIA GPU "
+                          "(pip install torch --index-url "
+                          "https://download.pytorch.org/whl/cu130), or run "
+                          "with --hz 6. Do NOT use --imgsz 640: it breaks "
+                          "player/civilian classification (measured).")
             except Exception:
                 pass
             perception = _build_perception(cfg)
@@ -283,7 +295,8 @@ def main(argv=None) -> None:
                                      bookkeeper=bookkeeper, hud_reader=hud_reader,
                                      loop_games=cfg.loop, telemetry=telemetry,
                                      menu_start=cfg.menu_start,
-                                     visualize_plain=cfg.visualize_plain)
+                                     visualize_plain=cfg.visualize_plain,
+                                     auto_lead=cfg.auto_lead)
         else:
             # Xenia: memory bookkeeping harness (works for memory OR vision input).
             from .engine.game_state import GameStateReader
