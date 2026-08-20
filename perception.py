@@ -213,6 +213,19 @@ class VisionPerception(Perception):
         self.max_player_hold = max_player_hold
         self._player_hold = 0
         self.last_player = None
+        # CENTER-OFFSET SELF-CALIBRATION (hardware round 3). The model's box
+        # centers are unbiased on emulator pixels (<=1.2px) but measured
+        # ~4.3px low / 1.4px left on a real capture chain (resampling phase
+        # shift) — every planner coordinate inherits that, which shows up as
+        # e.g. the player stopping short of the bottom wall. Isolated
+        # detections let us measure it live: sprite ink centroid vs box
+        # center, running median, applied once settled.
+        from collections import deque
+        self._off_dx = deque(maxlen=500)
+        self._off_dy = deque(maxlen=500)
+        self.center_off = (0.0, 0.0)     # applied (manual --center-off only)
+        self.center_measured = (0.0, 0.0)  # diagnostic, reported in telemetry
+        self._off_announced = False
         # Warm up (first inference compiles kernels / inits the tracker).
         frame = self.source.read()
         if frame is not None:
@@ -255,12 +268,14 @@ class VisionPerception(Perception):
     def _parse_boxes(self, boxes):
         """boxes -> (player_xy|None, entities, viz_boxes, player_px). The first
         two are in planner space (the brain's frame); viz_boxes/player_px are in
-        SCREEN pixels for the overlay. Side-effect free (unit-testable)."""
+        SCREEN pixels for the overlay. Applies the calibrated center offset."""
         player, best_pconf, ents = None, 0.0, []
         viz_boxes, player_px = [], None
-        for cls, conf, cx, cy, bw, bh in self._rows(boxes):
+        odx, ody = self.center_off
+        for cls, conf, rcx, rcy, bw, bh in self._rows(boxes):
             if conf < self.cls_conf.get(cls, 1.0):     # per-class gate
                 continue
+            cx, cy = rcx + odx, rcy + ody
             gx, gy = coords.px_to_game(cx, cy)
             if cls == 'Player':
                 if conf > best_pconf:                  # keep only the best player
@@ -274,6 +289,63 @@ class VisionPerception(Perception):
             ents.append(coords.to_pixels(gx, gy) + (name,))
             viz_boxes.append((cx, cy, bw, bh, cls))
         return player, ents, viz_boxes, player_px
+
+    def _calibrate_center(self, frame, viz_boxes):
+        """Sample sprite-centroid-vs-box-center offsets from ISOLATED boxes
+        (neighbours corrupt the centroid) and apply the running median once
+        enough samples agree. Costs ~nothing; a no-op on unbiased captures."""
+        import numpy as np
+        # Sample ONLY during actual gameplay (full-width arena border row
+        # present). Menu screens produce fake "E" detections (achievement
+        # icons at 0.4+), and sampling those walked the correction ~0.5px
+        # per update through every menu visit.
+        band = frame[615:645, 200:1080]
+        if band.size == 0 or (band.max(axis=2) > 140).mean(axis=1).max() < 0.6:
+            return
+        # Two hard-won rules (the first version DIVERGED, -2.5 -> -7.7 px in
+        # a steady ramp, caught in rehearsal):
+        #  * The sampling window must be anchored to the RAW box center. A
+        #    window centered on the corrected box shifts off the sprite as
+        #    the correction grows, clips its ink asymmetrically, and drags
+        #    the centroid further in the correction's direction — a positive
+        #    feedback loop.
+        #  * Only ELECTRODES are sampled: their ink is compact and symmetric,
+        #    so centroid == visual center. Shaped sprites (civilians, hulks)
+        #    have genuinely asymmetric ink and bias the estimate per class.
+        odx, ody = self.center_off
+        for i, (cx, cy, w, h, cls) in enumerate(viz_boxes[:10]):
+            if cls != 'E' or w < 8 or h < 8 or w > 60 or h > 60:
+                continue
+            if any(j != i and abs(b[0] - cx) < 45 and abs(b[1] - cy) < 45
+                   for j, b in enumerate(viz_boxes)):
+                continue                       # not isolated
+            rcx, rcy = cx - odx, cy - ody
+            x0, y0 = int(rcx - w / 2) - 8, int(rcy - h / 2) - 8
+            x1, y1 = int(rcx + w / 2) + 8, int(rcy + h / 2) + 8
+            if x0 < 0 or y0 < 0 or y1 > frame.shape[0] or x1 > frame.shape[1]:
+                continue
+            sub = frame[y0:y1, x0:x1].max(axis=2) > 90
+            if sub.sum() < 15:
+                continue
+            ys, xs = np.where(sub)
+            self._off_dx.append(x0 + float(xs.mean()) - rcx)
+            self._off_dy.append(y0 + float(ys.mean()) - rcy)
+        if len(self._off_dx) >= 120:
+            # MEASURED, NOT APPLIED. Live application was tried twice and
+            # walked both times: the ink centroid moves with the wave
+            # palette and the electrode flash phase, so centroid-vs-box is
+            # not a valid estimator of detection bias (on the emulator,
+            # where true bias is <=1.2px, it reads -4 to -8). The medians go
+            # to telemetry as a diagnostic; --center-off applies a manual
+            # correction if offline analysis ever justifies one.
+            self.center_measured = (float(np.median(self._off_dx)),
+                                    float(np.median(self._off_dy)))
+            if not self._off_announced:
+                self._off_announced = True
+                print(f"[vision] box-center diagnostic (not applied): "
+                      f"centroid-vs-box ({self.center_measured[0]:+.1f}, "
+                      f"{self.center_measured[1]:+.1f}) px, "
+                      f"n={len(self._off_dx)}")
 
     def _resolve_player(self, player):
         """Bounded last-player hold: reuse the last position for up to
@@ -298,6 +370,7 @@ class VisionPerception(Perception):
             return Observation(None, [])
         res = self._infer(frame)
         player, ents, viz_boxes, player_px = self._parse_boxes(res.boxes)
+        self._calibrate_center(frame, viz_boxes)
         # Boxes/player are kept unconditionally too — telemetry consumes them
         # on the hardware path; the overlay just reads the same fields.
         self.last_boxes = viz_boxes

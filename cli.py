@@ -80,6 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="use ByteTrack temporal smoothing instead of per-frame predict")
     vis.add_argument("--player-hold", type=int, default=6,
                      help="max blind frames to hold last player position")
+    vis.add_argument("--center-off", default=None,
+                     help="manual box-center correction 'dx,dy' in px, added "
+                          "to every detection (from offline analysis of the "
+                          "telemetry's box_center diagnostic; default none)")
     vis.add_argument("--imgsz", type=int, default=None,
                      help="inference size override (default: model native "
                           "1280). WARNING: 640 measured on hardware round 2 "
@@ -216,6 +220,13 @@ def _build_perception(cfg):
     vp = perc.VisionPerception(source, cfg.weights, conf=cfg.conf,
                                track=cfg.track, max_player_hold=cfg.player_hold,
                                imgsz=cfg.imgsz)
+    if cfg.center_off:
+        try:
+            dx, dy = (float(v) for v in str(cfg.center_off).split(","))
+            vp.center_off = (dx, dy)
+            print(f"[cli] manual box-center correction: ({dx:+.1f}, {dy:+.1f})")
+        except ValueError:
+            sys.exit(f"error: --center-off wants 'dx,dy', got {cfg.center_off!r}")
     vp.collect_viz = cfg.visualize        # collect screen boxes for the overlay
     return vp
 
@@ -245,12 +256,12 @@ def main(argv=None) -> None:
                 import torch
                 if not torch.cuda.is_available():
                     print("[cli] NOTE: torch has no CUDA — inference runs on "
-                          "CPU (~7 Hz ceiling at full resolution). Either "
-                          "install CUDA torch for your NVIDIA GPU "
-                          "(pip install torch --index-url "
-                          "https://download.pytorch.org/whl/cu130), or run "
-                          "with --hz 6. Do NOT use --imgsz 640: it breaks "
-                          "player/civilian classification (measured).")
+                          "CPU (~7 Hz ceiling). Fix with BOTH commands, in "
+                          "order:  pip uninstall torch torchvision torchaudio"
+                          "  THEN  pip install torch torchvision --index-url "
+                          "https://download.pytorch.org/whl/cu130 . "
+                          "Or run with --hz 6. Do NOT use --imgsz 640: it "
+                          "breaks player/civilian classification (measured).")
             except Exception:
                 pass
             perception = _build_perception(cfg)

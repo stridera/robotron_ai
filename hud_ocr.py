@@ -323,6 +323,7 @@ class VisionBookkeeper:
         self.game_over_fired = False
         self._pend = {}          # field -> (value, count)
         self._down = (None, 0)   # stuck-high score self-heal candidate
+        self._up = (None, 0)     # stuck-low score self-heal candidate
         self._last_player_t = 0.0
         self._ng = 0             # new-game evidence accumulator
         self._blind_t0 = None    # player-invisible streak start
@@ -380,6 +381,8 @@ class VisionBookkeeper:
         self.wave_score0 = 0
         self.max_wave, self.max_score = 1, 0
         self.game_over_fired = False
+        self._blind_t0 = None
+        self._last_wave_t = t          # suppress streak-deaths at game start
         self.on_event('new_game', game=self.game_id)
 
     def feed(self, reading, t=None, player_visible=None):
@@ -406,7 +409,12 @@ class VisionBookkeeper:
             self._blind_t0 = None
             self._last_player_t = t
         elif player_visible is False and self._blind_t0 is None:
-            self._blind_t0 = t
+            # Arm only while the game is demonstrably live (recent valid HUD
+            # read): the intro/menu screens flash player-LIKE sprites, and
+            # streaks armed there minted a phantom death at the start of
+            # every single game in hardware round 3.
+            if self.last_valid_t is not None and t - self.last_valid_t < 2.0:
+                self._blind_t0 = t
         if reading['score'] is not None or reading['wave'] is not None:
             self.last_valid_t = t
             self.game_over_fired = False
@@ -419,6 +427,19 @@ class VisionBookkeeper:
             elif s > self.score:
                 if s - self.score <= self.MAX_JUMP:
                     self.score = s
+                    self._up = (None, 0)
+                else:
+                    # Persistent much-higher readings mean the BASELINE is a
+                    # stuck-low torn read (round 3: score stuck at 343 while
+                    # the real score was 34k+ — every honest update exceeded
+                    # MAX_JUMP and was rejected, logging '+0' waves). Four
+                    # consecutive oversized readings adopt the new level.
+                    v, k = self._up
+                    self._up = (s, k + 1)
+                    if k + 1 >= 4:
+                        print(f"[hud] score baseline heal {self.score} -> {s}")
+                        self.score = s
+                        self._up = (None, 0)
             elif s < self.score:
                 # Regression: self-heal a stuck-high score (a rare too-high
                 # misread that got accepted): a persistently repeated lower

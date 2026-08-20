@@ -72,7 +72,9 @@ python -m venv .venv
   screen). You can also just start a game yourself — extra A presses do
   nothing during play.
 - **If a message about CPU inference appears** (no CUDA): install the GPU
-  version of PyTorch — this one command fixes it for NVIDIA cards:
+  version of PyTorch — run BOTH commands, in order (the uninstall matters;
+  pip won't replace the CPU version otherwise):
+  `.venv\Scripts\pip uninstall torch torchvision torchaudio`
   `.venv\Scripts\pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130`
   (Don't use `--imgsz 640` — it makes the bot misread the player as a
   civilian and freeze.)

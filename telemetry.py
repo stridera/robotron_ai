@@ -224,13 +224,15 @@ class HardwareTelemetry:
             "ticks": self.ticks,
         }
 
-    def finalize(self, tick_stats=None):
+    def finalize(self, tick_stats=None, center_off=None):
         if self._finalized:
             return
         self._finalized = True
         rep = self.report()
         if tick_stats:
             rep["tick"] = tick_stats
+        if center_off is not None:
+            rep["box_center_offset_px"] = [round(v, 2) for v in center_off]
         path = os.path.join(self.out, "report.json")
         try:
             with open(path, "w") as f:

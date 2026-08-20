@@ -364,28 +364,46 @@ def play_memory_game(brain, perception, controller, gsr, *,
 
 
 # ── Hardware menu navigation (vision-guarded) ───────────────────────────────
+def _arena_visible(frame):
+    """The one gameplay signal the shell menus cannot counterfeit: the
+    full-width arena border row (bottom edge, y~626-631). Measured on the
+    achievements screen: max row fill 0.117; in gameplay: ~0.86.
+
+    Every entity-based signal failed here in sequence: the menu background
+    art contains literal digit strings that read as a valid HUD, and the
+    menu's live demo THUMBNAIL plus achievement icons produce dozens of
+    confident detections — including Player at 0.54 — so even requiring
+    HUD-AND-player latched onto the achievements screen (the bot sat there
+    "playing", its stick commands scrolling the list)."""
+    band = frame[615:645, 200:1080]
+    fill = (band.max(axis=2) > 140).mean(axis=1)
+    return bool(fill.max() >= 0.6)
+
+
 def _sense_in_game(perception, hud_reader, seconds=3.0, hz=5.0):
-    """True if the game is demonstrably on: HUD readable OR the DETECTOR sees
-    the player. The HUD flashes (a single blank frame means nothing) and on
-    some rigs its reads are patchy, but the player detector runs at 0.88-0.92
-    visibility in-game — the OR of the two signals is what makes "don't touch
-    a live game" trustworthy on real hardware."""
+    """True only if the ARENA BORDER and a detected player have each been
+    seen within the window (not necessarily the same frame). The attract
+    demo passes this — by design: it is real gameplay footage, and latching
+    onto it self-corrects through the game-over retry cycle."""
+    saw_player = saw_border = False
     t_end = time.time() + seconds
     while time.time() < t_end:
         obs = perception.perceive(None)
         if obs is not None and obs.player is not None:
-            return True
+            saw_player = True
         frame = getattr(perception, "last_frame", None)
-        if frame is not None:
-            r = hud_reader.read(frame)
-            if r['score'] is not None or r['wave'] is not None:
-                return True
+        if frame is not None and _arena_visible(frame):
+            saw_border = True
+        if saw_player and saw_border:
+            return True
         time.sleep(1.0 / hz)
     return False
 
 
 def ensure_game_running(perception, hud_reader, controller,
-                        attempts: int = 8, use_start: bool = False) -> bool:
+                        attempts: int = 8, use_start: bool = False,
+                        after_game_over: bool = False,
+                        escape_first: bool = False) -> bool:
     """Get a game running by pressing A — no blocking pre-sense.
 
     Why blind-A is CORRECT here (two live lessons, one per direction):
@@ -405,7 +423,11 @@ def ensure_game_running(perception, hud_reader, controller,
     and report; a false confirmation from the attract demo self-corrects,
     because the demo ends, the bookkeeper times out, and --loop calls this
     again — retry-until-real converges where refuse-to-press stuck."""
-    if use_start:
+    if use_start or after_game_over:
+        # After a CONFIRMED game over, one Start press first: the high-score
+        # NAME ENTRY screen wants 17 A-presses (one per letter) to finish,
+        # but Start confirms/skips it in one (operator request, round 3).
+        # Safe here: the game is over, so the pause-menu hazard is absent.
         controller.press_start()
         time.sleep(2.0)
     print("[harness] pressing A until a game is on (A is a no-op in-game)")
@@ -457,6 +479,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     blind = 0
     hud_every = max(1, int(hz / 5))     # OCR ~5x/s is plenty for bookkeeping
     n = 0
+    last_border_t = time.time()
     try:
         while True:
             n += 1
@@ -496,12 +519,30 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                 # the only state needing action: restart via the same vision-
                 # guarded navigator, which presses nothing until the HUD has
                 # been gone for a full sensing window.
-                if bookkeeper.game_over_fired and loop_games:
+                # Defense in depth: if the ARENA BORDER has been absent for
+                # 15s, we are not in the game no matter what the entity
+                # signals say (menus fake digits AND player boxes — see
+                # _arena_visible). Force the restart cycle.
+                if _arena_visible(frame):
+                    last_border_t = time.time()
+                no_arena = (loop_games
+                            and time.time() - last_border_t > 15.0)
+                if no_arena:
+                    print("[harness] no arena border for 15s — not in the "
+                          "game; running menu recovery")
+                if (bookkeeper.game_over_fired and loop_games) or no_arena:
                     controller.neutral()
                     brain.reset()
                     perception.reset()
                     ensure_game_running(perception, hud_reader, controller,
-                                        use_start=menu_start)
+                                        use_start=menu_start,
+                                        after_game_over=not no_arena,
+                                        escape_first=no_arena)
+                    # Re-anchor the clock: navigation legitimately blocks for
+                    # ~30s, and without this every restart printed a bogus
+                    # 29,000 ms OVERRUN.
+                    clock.next = None
+                    last_border_t = time.time()
             cur_mv = cur_fr = 0
             if obs.player is None:
                 blind += 1
@@ -525,4 +566,6 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     finally:
         # Ctrl+C included: the friend's report must survive any exit.
         if telemetry is not None:
-            telemetry.finalize(tick_stats=clock.stats())
+            telemetry.finalize(tick_stats=clock.stats(),
+                               center_off=getattr(perception,
+                                                  'center_measured', None))
