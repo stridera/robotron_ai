@@ -175,6 +175,35 @@ class HardwareTelemetry:
                 self.hud_conf.append(round(float(reading['conf']), 3))
         elif self.hud_reads > 50:
             self._save_frame("hud_unreadable", frame)
+        # Wave-read failures WITH a good score read are the interesting
+        # class (round 4: single-digit waves unreadable on one rig, cause
+        # undiagnosable without the pixels). Keep a rotating set.
+        if reading['score'] is not None and reading['wave'] is None:
+            now = time.time()
+            if now - getattr(self, '_wf_t', 0) > 60:
+                self._wf_t = now
+                self._wf_i = getattr(self, '_wf_i', 0) % 3 + 1
+                try:
+                    import cv2
+                    cv2.imwrite(os.path.join(
+                        self.out, f"wave_fail_{self._wf_i}.png"), frame)
+                except Exception:
+                    pass
+
+    def periodic_frame(self, frame):
+        """Rolling gameplay frames (~90s apart, keep 6): the raw material
+        for fixing rig-specific perception offline."""
+        now = time.time()
+        if frame is None or now - getattr(self, '_pf_t', 0) < 90:
+            return
+        self._pf_t = now
+        self._pf_i = getattr(self, '_pf_i', 0) % 6 + 1
+        try:
+            import cv2
+            cv2.imwrite(os.path.join(self.out, f"frame_{self._pf_i}.png"),
+                        frame)
+        except Exception:
+            pass
 
     def game_over(self, **kw):
         self.games.append({k: kw.get(k) for k in

@@ -376,7 +376,11 @@ def _arena_visible(frame):
     HUD-AND-player latched onto the achievements screen (the bot sat there
     "playing", its stick commands scrolling the list)."""
     band = frame[615:645, 200:1080]
-    fill = (band.max(axis=2) > 140).mean(axis=1)
+    # Threshold 100, not 140: some wave palettes draw the border DIM, and at
+    # 140 it vanished mid-game — the watchdog then pressed A during play
+    # (harmless) and, worse, the false absence reopened the new-game window.
+    # Menus measure 0.117 fill regardless, so the margin holds.
+    fill = (band.max(axis=2) > 100).mean(axis=1)
     return bool(fill.max() >= 0.6)
 
 
@@ -424,12 +428,21 @@ def ensure_game_running(perception, hud_reader, controller,
     because the demo ends, the bookkeeper times out, and --loop calls this
     again — retry-until-real converges where refuse-to-press stuck."""
     if use_start or after_game_over:
-        # After a CONFIRMED game over, one Start press first: the high-score
-        # NAME ENTRY screen wants 17 A-presses (one per letter) to finish,
-        # but Start confirms/skips it in one (operator request, round 3).
-        # Safe here: the game is over, so the pause-menu hazard is absent.
+        # After a CONFIRMED game over: Start once (skips/confirms the
+        # high-score NAME ENTRY, which otherwise wants 17 A presses) plus a
+        # few fire-stick-up nudges (operator request — helps the entry
+        # cursor along; harmless on every other screen). Safe here: the
+        # game is over, so the pause-menu hazard is absent.
+        print("[harness] game over — Start + fire-up nudges to clear the "
+              "name-entry screen")
         controller.press_start()
-        time.sleep(2.0)
+        time.sleep(1.0)
+        for _ in range(3):
+            controller.move_shoot(0, 1)      # fire stick up
+            time.sleep(0.15)
+            controller.neutral()
+            time.sleep(0.3)
+        time.sleep(0.6)
     print("[harness] pressing A until a game is on (A is a no-op in-game)")
     for i in range(attempts):
         controller.press_a()
@@ -450,7 +463,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                      visualizer=None, bookkeeper=None, hud_reader=None,
                      loop_games: bool = False, telemetry=None,
                      menu_start: bool = False, visualize_plain: bool = False,
-                     auto_lead: bool = False):
+                     auto_lead: bool = False, games_limit: int = 0):
     """Minimal loop for real hardware. Runs until interrupted (Ctrl+C). Plans and
     acts whenever the player is visible; goes neutral when it isn't.
 
@@ -479,6 +492,8 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     blind = 0
     hud_every = max(1, int(hz / 5))     # OCR ~5x/s is plenty for bookkeeping
     n = 0
+    games_done = 0
+    prev_go = False
     last_border_t = time.time()
     try:
         while True:
@@ -508,10 +523,13 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             frame = getattr(perception, "last_frame", None)
             if telemetry is not None:
                 telemetry.frame(frame)
+                telemetry.periodic_frame(frame)
             if (hud_reader is not None and bookkeeper is not None
                     and n % hud_every == 0 and frame is not None):
                 r = hud_reader.read(frame)
-                bookkeeper.feed(r, player_visible=(obs.player is not None))
+                av = _arena_visible(frame)
+                bookkeeper.feed(r, player_visible=(obs.player is not None),
+                                arena_visible=av)
                 if telemetry is not None:
                     telemetry.hud(r, frame)
                 # Deaths need no input (the game respawns automatically; the
@@ -523,13 +541,22 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                 # 15s, we are not in the game no matter what the entity
                 # signals say (menus fake digits AND player boxes — see
                 # _arena_visible). Force the restart cycle.
-                if _arena_visible(frame):
+                if av:
                     last_border_t = time.time()
                 no_arena = (loop_games
                             and time.time() - last_border_t > 15.0)
                 if no_arena:
                     print("[harness] no arena border for 15s — not in the "
                           "game; running menu recovery")
+                # --games N: count completed games, exit cleanly at the limit
+                # (telemetry still written by the finally block).
+                if bookkeeper.game_over_fired and not prev_go:
+                    games_done += 1
+                    if games_limit and games_done >= games_limit:
+                        print(f"[harness] {games_done} games completed "
+                              f"(--games {games_limit}) — stopping")
+                        return
+                prev_go = bookkeeper.game_over_fired
                 if (bookkeeper.game_over_fired and loop_games) or no_arena:
                     controller.neutral()
                     brain.reset()

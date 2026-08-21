@@ -105,6 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
                      help="disable 60Hz frame-sync (memory input only)")
 
     run = p.add_argument_group("run")
+    run.add_argument("--games", type=int, default=0,
+                     help="hardware --loop: stop cleanly after N completed "
+                          "games (0 = run until Ctrl+C)")
     run.add_argument("--loop", action="store_true",
                      help="replay games back-to-back (hardware: auto-restart "
                           "after game over via the vision-guarded navigator)")
@@ -307,7 +310,8 @@ def main(argv=None) -> None:
                                      loop_games=cfg.loop, telemetry=telemetry,
                                      menu_start=cfg.menu_start,
                                      visualize_plain=cfg.visualize_plain,
-                                     auto_lead=cfg.auto_lead)
+                                     auto_lead=cfg.auto_lead,
+                                     games_limit=cfg.games)
         else:
             # Xenia: memory bookkeeping harness (works for memory OR vision input).
             from .engine.game_state import GameStateReader

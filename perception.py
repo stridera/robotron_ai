@@ -300,7 +300,7 @@ class VisionPerception(Perception):
         # icons at 0.4+), and sampling those walked the correction ~0.5px
         # per update through every menu visit.
         band = frame[615:645, 200:1080]
-        if band.size == 0 or (band.max(axis=2) > 140).mean(axis=1).max() < 0.6:
+        if band.size == 0 or (band.max(axis=2) > 100).mean(axis=1).max() < 0.6:
             return
         # Two hard-won rules (the first version DIVERGED, -2.5 -> -7.7 px in
         # a steady ramp, caught in rehearsal):

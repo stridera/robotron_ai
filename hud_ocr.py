@@ -326,6 +326,8 @@ class VisionBookkeeper:
         self._up = (None, 0)     # stuck-low score self-heal candidate
         self._last_player_t = 0.0
         self._ng = 0             # new-game evidence accumulator
+        self._last_no_arena_t = 0.0   # 0.0 = no arena info yet (permissive)
+        self._no_arena_t0 = None      # current absence-streak start
         self._blind_t0 = None    # player-invisible streak start
         self._last_death_t = 0.0
         self._last_wave_t = 0.0
@@ -385,11 +387,32 @@ class VisionBookkeeper:
         self._last_wave_t = t          # suppress streak-deaths at game start
         self.on_event('new_game', game=self.game_id)
 
-    def feed(self, reading, t=None, player_visible=None):
+    def feed(self, reading, t=None, player_visible=None, arena_visible=None):
         """Feed one HudReader.read() result. `player_visible`: whether the
-        DETECTOR currently sees the player — used as a game-over veto.
-        Returns the current state dict."""
+        DETECTOR currently sees the player (game-over veto). `arena_visible`:
+        whether the full-width arena border is on screen — the one signal
+        menus cannot counterfeit. When provided it gates the state machine:
+        a NEW GAME requires a recent arena-absent episode (mid-game false
+        new-games — the 'game over at wave 10' chain, where wave '10' read
+        as prefix '1' while torn score prefixes stayed under 10000 and never
+        contradicted — become impossible), and disappearance-deaths only arm
+        and fire while the arena is actually on screen (menu transitions
+        minted phantom W1 deaths). None = unknown (emulator validators):
+        gates stay permissive. Returns the current state dict."""
         t = t if t is not None else time.time()
+        if arena_visible is False:
+            # Only SUSTAINED absence (>=3s) counts as a real non-game
+            # episode: wave transitions blank the border for a moment, and
+            # letting those blips reopen the new-game window would re-arm
+            # the exact mid-game misread chain this gate exists to stop.
+            if self._no_arena_t0 is None:
+                self._no_arena_t0 = t
+            elif t - self._no_arena_t0 >= 3.0:
+                self._last_no_arena_t = t
+        elif arena_visible is True:
+            self._no_arena_t0 = None
+            if self._last_no_arena_t == 0.0:
+                self._last_no_arena_t = -1.0   # arena seen, no absence yet
         if player_visible:
             # Death by disappearance: a real death hides the player for the
             # ~2s explosion + respawn. A bounded invisible streak ENDING in a
@@ -399,6 +422,7 @@ class VisionBookkeeper:
             # deduped against lives-drop deaths, bounded above so game-over
             # blackouts don't count.
             if (self._blind_t0 is not None and self.wave is not None
+                    and arena_visible is not False
                     and 1.5 <= t - self._blind_t0 <= 4.5
                     and t - self._last_wave_t > 5.0
                     and t - self._last_death_t > 4.0):
@@ -410,10 +434,11 @@ class VisionBookkeeper:
             self._last_player_t = t
         elif player_visible is False and self._blind_t0 is None:
             # Arm only while the game is demonstrably live (recent valid HUD
-            # read): the intro/menu screens flash player-LIKE sprites, and
-            # streaks armed there minted a phantom death at the start of
-            # every single game in hardware round 3.
-            if self.last_valid_t is not None and t - self.last_valid_t < 2.0:
+            # read AND, when known, the arena on screen): menu screens flash
+            # player-LIKE sprites and fake digit reads, and streaks armed
+            # there minted phantom deaths (rounds 3 and 4).
+            if (self.last_valid_t is not None and t - self.last_valid_t < 2.0
+                    and arena_visible is not False):
                 self._blind_t0 = t
         if reading['score'] is not None or reading['wave'] is not None:
             self.last_valid_t = t
@@ -493,8 +518,14 @@ class VisionBookkeeper:
             self._ng = 0
         elif reading['wave'] == 1:
             self._ng += 1
+        # Arena context: a real new game is always preceded by non-arena
+        # screens (game over / menus). With arena info supplied, no recent
+        # absence => no new game, whatever the digits say.
+        arena_ok = (self._last_no_arena_t == 0.0
+                    or (self._last_no_arena_t > 0.0
+                        and t - self._last_no_arena_t < 30.0))
         if (self._ng >= 5 and self.wave is not None and self.wave > 1
-                and self._progressed()):
+                and self._progressed() and arena_ok):
             self._ng = 0
             self._new_game(t)
 
