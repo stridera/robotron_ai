@@ -390,14 +390,25 @@ def _sense_in_game(perception, hud_reader, seconds=3.0, hz=5.0):
     demo passes this — by design: it is real gameplay footage, and latching
     onto it self-corrects through the game-over retry cycle."""
     saw_player = saw_border = False
+    first_score = None
     t_end = time.time() + seconds
     while time.time() < t_end:
         obs = perception.perceive(None)
         if obs is not None and obs.player is not None:
             saw_player = True
         frame = getattr(perception, "last_frame", None)
-        if frame is not None and _arena_visible(frame):
-            saw_border = True
+        if frame is not None:
+            if _arena_visible(frame):
+                saw_border = True
+            # Borderless waves (e.g. wave 9): accept an ADVANCING score as
+            # the border's stand-in — menus can't advance a score, and the
+            # mod-25 gate keeps their digit-art out of these reads.
+            r = hud_reader.read(frame)
+            if r['score'] is not None:
+                if first_score is None:
+                    first_score = r['score']
+                elif r['score'] > first_score:
+                    saw_border = True
         if saw_player and saw_border:
             return True
         time.sleep(1.0 / hz)
@@ -543,11 +554,21 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                 # _arena_visible). Force the restart cycle.
                 if av:
                     last_border_t = time.time()
+                # SOME WAVES HAVE NO BORDER (operator-reported: wave 9; his
+                # frames confirm border fill 0.0 with a live, ADVANCING
+                # score). The border alone therefore cannot mean "not in the
+                # game" — round 5's watchdog fired mid-wave-9 and its
+                # recovery pause cost the remaining lives in 3 of 5 games.
+                # A menu can fake many things, but its score never ADVANCES
+                # (and mod-25 filtering kills the digit-art reads): so "not
+                # in game" now requires BOTH border absent AND no stable
+                # score advance for 15s.
                 no_arena = (loop_games
-                            and time.time() - last_border_t > 15.0)
+                            and time.time() - last_border_t > 15.0
+                            and time.time() - bookkeeper.last_advance_t > 15.0)
                 if no_arena:
-                    print("[harness] no arena border for 15s — not in the "
-                          "game; running menu recovery")
+                    print("[harness] no arena border AND no scoring for 15s "
+                          "— not in the game; running menu recovery")
                 # --games N: count completed games, exit cleanly at the limit
                 # (telemetry still written by the finally block).
                 if bookkeeper.game_over_fired and not prev_go:

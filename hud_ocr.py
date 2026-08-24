@@ -217,6 +217,12 @@ class HudReader:
 
         s_mask = _score_mask(s_strip)
         score, s_conf = self._read_number(s_mask, max_digits=8)
+        # Every Robotron score event is a multiple of 25, so any read that
+        # isn't ≡0 (mod 25) is a misread — a torn prefix ('9597' from
+        # 95975) or menu digit-art ('2084'). One line kills both classes
+        # that repeatedly defeated the temporal guards.
+        if score is not None and score % 25 != 0:
+            score, s_conf = None, 0.0
 
         w_mask = _wave_mask(w_strip)
         if self.wave_templates is not None:
@@ -325,6 +331,8 @@ class VisionBookkeeper:
         self._down = (None, 0)   # stuck-high score self-heal candidate
         self._up = (None, 0)     # stuck-low score self-heal candidate
         self._last_player_t = 0.0
+        self.last_advance_t = 0.0   # stable score last increased (harness
+                                    # watchdog: borderless waves still score)
         self._ng = 0             # new-game evidence accumulator
         self._last_no_arena_t = 0.0   # 0.0 = no arena info yet (permissive)
         self._no_arena_t0 = None      # current absence-streak start
@@ -449,9 +457,11 @@ class VisionBookkeeper:
         if s is not None:
             if self.score is None:
                 self.score = s
+                self.last_advance_t = t
             elif s > self.score:
                 if s - self.score <= self.MAX_JUMP:
                     self.score = s
+                    self.last_advance_t = t
                     self._up = (None, 0)
                 else:
                     # Persistent much-higher readings mean the BASELINE is a
