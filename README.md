@@ -189,8 +189,10 @@ auto-harvested on the emulator with memory ground truth and shipped at
 wave lines in the console and a per-wave JSONL (`--hud-log`) in the same
 shape the emulator harness writes, so `robotron/ab_yolo.py --log <file>` can
 analyse and A/B hardware runs exactly like emulator runs. `--no-hud`
-disables it. Known limit: the lives-icon row caps at 8 icons, so deaths from
-a 9+ life bank don't register — rare outside marathon emulator runs.
+disables it. Deaths are counted from the lives-icon row dropping (nothing
+else — a detector losing sight of the player is never treated as a death).
+Known limit: the lives-icon row caps at 8 icons, so deaths from a 9+ life
+bank don't register — rare outside marathon emulator runs.
 
 ---
 

@@ -364,33 +364,22 @@ def play_memory_game(brain, perception, controller, gsr, *,
 
 
 # ── Hardware menu navigation (vision-guarded) ───────────────────────────────
-def _arena_visible(frame):
-    """The one gameplay signal the shell menus cannot counterfeit: the
-    full-width arena border row (bottom edge, y~626-631). Measured on the
-    achievements screen: max row fill 0.117; in gameplay: ~0.86.
-
-    Every entity-based signal failed here in sequence: the menu background
-    art contains literal digit strings that read as a valid HUD, and the
-    menu's live demo THUMBNAIL plus achievement icons produce dozens of
-    confident detections — including Player at 0.54 — so even requiring
-    HUD-AND-player latched onto the achievements screen (the bot sat there
-    "playing", its stick commands scrolling the list)."""
-    band = frame[615:645, 200:1080]
-    # Threshold 100, not 140: some wave palettes draw the border DIM, and at
-    # 140 it vanished mid-game — the watchdog then pressed A during play
-    # (harmless) and, worse, the false absence reopened the new-game window.
-    # Menus measure 0.117 fill regardless, so the margin holds.
-    fill = (band.max(axis=2) > 100).mean(axis=1)
-    return bool(fill.max() >= 0.6)
-
-
 def _sense_in_game(perception, hud_reader, seconds=3.0, hz=5.0):
-    """True only if the ARENA BORDER and a detected player have each been
-    seen within the window (not necessarily the same frame). The attract
-    demo passes this — by design: it is real gameplay footage, and latching
-    onto it self-corrects through the game-over retry cycle."""
-    saw_player = saw_border = False
-    first_score = None
+    """True only if a valid HUD read (score or wave) and a detected player
+    have each been seen within the window (not necessarily the same frame —
+    the HUD flashes). The attract demo passes this — by design: it is real
+    gameplay footage, and latching onto it self-corrects through the
+    game-over retry cycle.
+
+    History: this used to require the arena BORDER row, because early menu
+    screens faked digit reads (title art '2084'/'1982') and even a player
+    box (demo thumbnail on the achievements screen). Round 6 removed the
+    border entirely (operator directive): some waves draw no border, and
+    the border watchdog it fed threw away every game at wave 9. The menu
+    digit-art that motivated it is now killed upstream instead — the mod-25
+    score gate (2084 % 25 != 0) and letter-negative templates reject those
+    reads at the OCR layer."""
+    saw_player = saw_hud = False
     t_end = time.time() + seconds
     while time.time() < t_end:
         obs = perception.perceive(None)
@@ -398,18 +387,10 @@ def _sense_in_game(perception, hud_reader, seconds=3.0, hz=5.0):
             saw_player = True
         frame = getattr(perception, "last_frame", None)
         if frame is not None:
-            if _arena_visible(frame):
-                saw_border = True
-            # Borderless waves (e.g. wave 9): accept an ADVANCING score as
-            # the border's stand-in — menus can't advance a score, and the
-            # mod-25 gate keeps their digit-art out of these reads.
             r = hud_reader.read(frame)
-            if r['score'] is not None:
-                if first_score is None:
-                    first_score = r['score']
-                elif r['score'] > first_score:
-                    saw_border = True
-        if saw_player and saw_border:
+            if r['score'] is not None or r['wave'] is not None:
+                saw_hud = True
+        if saw_player and saw_hud:
             return True
         time.sleep(1.0 / hz)
     return False
@@ -437,7 +418,23 @@ def ensure_game_running(perception, hud_reader, controller,
     Sensing (HUD readable / player detected) is used only to STOP pressing
     and report; a false confirmation from the attract demo self-corrects,
     because the demo ends, the bookkeeper times out, and --loop calls this
-    again — retry-until-real converges where refuse-to-press stuck."""
+    again — retry-until-real converges where refuse-to-press stuck.
+
+    `escape_first`: last-resort ladder for a rig somehow stuck in a shell
+    menu (only reachable if presses outside the A-path happened — e.g. an
+    operator's stray input). B backs out one level, UP x5 walks to the top
+    of any list, then the normal A presses run. Never used on the first
+    recovery attempt: B is 'Exit Game' on some screens, so it is earned
+    only by repeated failure of the safe path."""
+    if escape_first:
+        print("[harness] recovery escalation: B (back out), UP x5, then A")
+        controller.press_b()
+        time.sleep(1.2)
+        for _ in range(5):
+            controller.move_shoot(1, 0)      # stick up = menu cursor up
+            time.sleep(0.2)
+            controller.neutral()
+            time.sleep(0.35)
     if use_start or after_game_over:
         # After a CONFIRMED game over: Start once (skips/confirms the
         # high-score NAME ENTRY, which otherwise wants 17 A presses) plus a
@@ -505,7 +502,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     n = 0
     games_done = 0
     prev_go = False
-    last_border_t = time.time()
+    nav_fails = 0       # consecutive failed recoveries -> escalate to escape
     try:
         while True:
             n += 1
@@ -538,37 +535,22 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             if (hud_reader is not None and bookkeeper is not None
                     and n % hud_every == 0 and frame is not None):
                 r = hud_reader.read(frame)
-                av = _arena_visible(frame)
-                bookkeeper.feed(r, player_visible=(obs.player is not None),
-                                arena_visible=av)
+                bookkeeper.feed(r, player_visible=(obs.player is not None))
                 if telemetry is not None:
                     telemetry.hud(r, frame)
                 # Deaths need no input (the game respawns automatically; the
                 # bookkeeper counts them from the lives icons). GAME OVER is
                 # the only state needing action: restart via the same vision-
                 # guarded navigator, which presses nothing until the HUD has
-                # been gone for a full sensing window.
-                # Defense in depth: if the ARENA BORDER has been absent for
-                # 15s, we are not in the game no matter what the entity
-                # signals say (menus fake digits AND player boxes — see
-                # _arena_visible). Force the restart cycle.
-                if av:
-                    last_border_t = time.time()
-                # SOME WAVES HAVE NO BORDER (operator-reported: wave 9; his
-                # frames confirm border fill 0.0 with a live, ADVANCING
-                # score). The border alone therefore cannot mean "not in the
-                # game" — round 5's watchdog fired mid-wave-9 and its
-                # recovery pause cost the remaining lives in 3 of 5 games.
-                # A menu can fake many things, but its score never ADVANCES
-                # (and mod-25 filtering kills the digit-art reads): so "not
-                # in game" now requires BOTH border absent AND no stable
-                # score advance for 15s.
-                no_arena = (loop_games
-                            and time.time() - last_border_t > 15.0
-                            and time.time() - bookkeeper.last_advance_t > 15.0)
-                if no_arena:
-                    print("[harness] no arena border AND no scoring for 15s "
-                          "— not in the game; running menu recovery")
+                # been gone for a full sensing window. There is NO separate
+                # mid-game watchdog any more: rounds 5 and 6 both proved the
+                # watchdog itself was the thing throwing games away (border
+                # missing on wave 9; score OCR blind past 100k), while the
+                # menu-stuck state it guarded against is only reachable
+                # through button presses this loop no longer makes. If a
+                # menu is somehow reached anyway, the game-over path fires
+                # (no HUD, no player) and recovery ESCALATES on repeated
+                # failure below.
                 # --games N: count completed games, exit cleanly at the limit
                 # (telemetry still written by the finally block).
                 if bookkeeper.game_over_fired and not prev_go:
@@ -578,19 +560,20 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                               f"(--games {games_limit}) — stopping")
                         return
                 prev_go = bookkeeper.game_over_fired
-                if (bookkeeper.game_over_fired and loop_games) or no_arena:
+                if bookkeeper.game_over_fired and loop_games:
                     controller.neutral()
                     brain.reset()
                     perception.reset()
-                    ensure_game_running(perception, hud_reader, controller,
-                                        use_start=menu_start,
-                                        after_game_over=not no_arena,
-                                        escape_first=no_arena)
+                    ok = ensure_game_running(
+                        perception, hud_reader, controller,
+                        use_start=menu_start,
+                        after_game_over=(nav_fails == 0),
+                        escape_first=(nav_fails >= 2))
+                    nav_fails = 0 if ok else nav_fails + 1
                     # Re-anchor the clock: navigation legitimately blocks for
                     # ~30s, and without this every restart printed a bogus
                     # 29,000 ms OVERRUN.
                     clock.next = None
-                    last_border_t = time.time()
             cur_mv = cur_fr = 0
             if obs.player is None:
                 blind += 1

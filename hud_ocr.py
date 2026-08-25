@@ -331,12 +331,10 @@ class VisionBookkeeper:
         self._down = (None, 0)   # stuck-high score self-heal candidate
         self._up = (None, 0)     # stuck-low score self-heal candidate
         self._last_player_t = 0.0
-        self.last_advance_t = 0.0   # stable score last increased (harness
-                                    # watchdog: borderless waves still score)
+        self.last_advance_t = 0.0   # stable score last increased
         self._ng = 0             # new-game evidence accumulator
-        self._last_no_arena_t = 0.0   # 0.0 = no arena info yet (permissive)
-        self._no_arena_t0 = None      # current absence-streak start
-        self._blind_t0 = None    # player-invisible streak start
+        self._last_no_hud_t = 0.0   # last sustained (>=5s) no-valid-HUD
+                                    # episode; 0.0 = none seen yet (permissive)
         self._last_death_t = 0.0
         self._last_wave_t = 0.0
 
@@ -391,66 +389,40 @@ class VisionBookkeeper:
         self.wave_score0 = 0
         self.max_wave, self.max_score = 1, 0
         self.game_over_fired = False
-        self._blind_t0 = None
-        self._last_wave_t = t          # suppress streak-deaths at game start
+        self._last_wave_t = t
         self.on_event('new_game', game=self.game_id)
 
-    def feed(self, reading, t=None, player_visible=None, arena_visible=None):
+    def feed(self, reading, t=None, player_visible=None):
         """Feed one HudReader.read() result. `player_visible`: whether the
-        DETECTOR currently sees the player (game-over veto). `arena_visible`:
-        whether the full-width arena border is on screen — the one signal
-        menus cannot counterfeit. When provided it gates the state machine:
-        a NEW GAME requires a recent arena-absent episode (mid-game false
-        new-games — the 'game over at wave 10' chain, where wave '10' read
-        as prefix '1' while torn score prefixes stayed under 10000 and never
-        contradicted — become impossible), and disappearance-deaths only arm
-        and fire while the arena is actually on screen (menu transitions
-        minted phantom W1 deaths). None = unknown (emulator validators):
-        gates stay permissive. Returns the current state dict."""
+        DETECTOR currently sees the player (game-over veto only).
+
+        Deaths come from the LIVES ICONS DROPPING and nothing else. A
+        player-disappearance death path existed through hardware round 6 and
+        was removed: the real capture chain delivers ~45% duplicate frames
+        and long detector blind streaks (48 streaks of 20+ frames in one
+        five-game session), so every civilian pickup and wave transition
+        minted phantom deaths, while the deaths it was meant to catch were
+        actually the lives reader going blind past 100k (leading-'1'
+        threshold miss — fixed in the font, not here).
+
+        No arena-border input either (round 6, operator directive): some
+        waves draw no border, and the HUD itself — score/wave reads passing
+        the mod-25 and letter-negative gates — is the in-game signal. The
+        HUD flashes, so absence only means anything when SUSTAINED."""
         t = t if t is not None else time.time()
-        if arena_visible is False:
-            # Only SUSTAINED absence (>=3s) counts as a real non-game
-            # episode: wave transitions blank the border for a moment, and
-            # letting those blips reopen the new-game window would re-arm
-            # the exact mid-game misread chain this gate exists to stop.
-            if self._no_arena_t0 is None:
-                self._no_arena_t0 = t
-            elif t - self._no_arena_t0 >= 3.0:
-                self._last_no_arena_t = t
-        elif arena_visible is True:
-            self._no_arena_t0 = None
-            if self._last_no_arena_t == 0.0:
-                self._last_no_arena_t = -1.0   # arena seen, no absence yet
         if player_visible:
-            # Death by disappearance: a real death hides the player for the
-            # ~2s explosion + respawn. A bounded invisible streak ENDING in a
-            # reappearance is a death the lives-row OCR may have missed
-            # (round 2: "does not log deaths that do happen"). Guards: not
-            # right after a wave change (transitions also hide the player),
-            # deduped against lives-drop deaths, bounded above so game-over
-            # blackouts don't count.
-            if (self._blind_t0 is not None and self.wave is not None
-                    and arena_visible is not False
-                    and 1.5 <= t - self._blind_t0 <= 4.5
-                    and t - self._last_wave_t > 5.0
-                    and t - self._last_death_t > 4.0):
-                self.deaths += 1
-                self.wave_deaths += 1
-                self._last_death_t = t
-                self.on_event('death', deaths=self.deaths, wave=self.wave)
-            self._blind_t0 = None
             self._last_player_t = t
-        elif player_visible is False and self._blind_t0 is None:
-            # Arm only while the game is demonstrably live (recent valid HUD
-            # read AND, when known, the arena on screen): menu screens flash
-            # player-LIKE sprites and fake digit reads, and streaks armed
-            # there minted phantom deaths (rounds 3 and 4).
-            if (self.last_valid_t is not None and t - self.last_valid_t < 2.0
-                    and arena_visible is not False):
-                self._blind_t0 = t
         if reading['score'] is not None or reading['wave'] is not None:
             self.last_valid_t = t
             self.game_over_fired = False
+        elif self.last_valid_t is not None \
+                and t - self.last_valid_t >= 5.0:
+            # Sustained no-valid-HUD episode (game over screens, name entry,
+            # menus). Recorded as context for new-game detection: a real new
+            # game is always preceded by one of these. 5s comfortably
+            # exceeds any legitimate in-game blank (flash cycles + death
+            # freeze + wave wipe stack to ~4s worst case).
+            self._last_no_hud_t = t
 
         # ── score (stable + monotonic) ──
         s = self._stable('score', reading['score'])
@@ -528,14 +500,15 @@ class VisionBookkeeper:
             self._ng = 0
         elif reading['wave'] == 1:
             self._ng += 1
-        # Arena context: a real new game is always preceded by non-arena
-        # screens (game over / menus). With arena info supplied, no recent
-        # absence => no new game, whatever the digits say.
-        arena_ok = (self._last_no_arena_t == 0.0
-                    or (self._last_no_arena_t > 0.0
-                        and t - self._last_no_arena_t < 30.0))
+        # HUD-gap context: a real new game is always preceded by screens
+        # with no valid HUD (game over / name entry / menus). No recent
+        # sustained gap => no new game, whatever the digits say — this is
+        # what stops the wave-'11'-reads-as-'1' chain mid-game even when
+        # torn score reads slip past mod-25 (prefixes ending 00/25/50/75).
+        hud_gap_ok = (self._last_no_hud_t == 0.0
+                      or t - self._last_no_hud_t < 30.0)
         if (self._ng >= 5 and self.wave is not None and self.wave > 1
-                and self._progressed() and arena_ok):
+                and self._progressed() and hud_gap_ok):
             self._ng = 0
             self._new_game(t)
 
@@ -549,8 +522,8 @@ class VisionBookkeeper:
                         and t - self._last_death_t > 4.0:
                     # Real deaths drop EXACTLY one life; a 2-drop is a noisy
                     # extent settling (this is what produced the skipped
-                    # death numbers in the first hardware round). Count one;
-                    # dedup against a disappearance-death within 4s.
+                    # death numbers in the first hardware round). Count one,
+                    # at most one per 4s.
                     self.deaths += 1
                     self.wave_deaths += 1
                     self._last_death_t = t
