@@ -160,7 +160,21 @@ class HudReader:
         # The wave line uses a SMALLER font with different glyph shapes
         # (digit widths 2-8px vs the score's 13-14) — score templates cannot
         # read it. Separate set, harvested from the wave strip.
+        # MULTI-VARIANT (hardware round 7): wave_digits may hold MORE than
+        # one template per digit — wave_labels[i] names the digit template i
+        # represents. Real capture chains render these tiny glyphs just
+        # differently enough that a single emulator-harvested template tops
+        # out at ~0.78-0.85 on hardware (right at the threshold, scattering
+        # with the per-wave palette); adding glyphs cropped from the
+        # operator's own frames lets his rig self-match at ~1.0. Without a
+        # labels array the set is the classic one-per-digit layout.
         self.wave_templates = z["wave_digits"] if "wave_digits" in z else None
+        if "wave_labels" in z:
+            self.wave_labels = z["wave_labels"].astype(int)
+        elif self.wave_templates is not None:
+            self.wave_labels = np.arange(len(self.wave_templates))
+        else:
+            self.wave_labels = None
         self.wave_threshold = (float(z["wave_threshold"])
                                if "wave_threshold" in z else self.threshold)
         # Lives icons sit nearly flush, so counting clusters reads 1 no
@@ -174,19 +188,29 @@ class HudReader:
         self.n_read = 0
         self.n_reject = 0
 
-    def _match_digit(self, g, templates=None):
-        """(best_digit, score in [0,1]) for a normalized glyph."""
+    def _match_digit(self, g, templates=None, labels=None, neg_margin=0.0):
+        """(best_digit, score in [0,1]) for a normalized glyph.
+
+        `neg_margin`: veto a digit only when the best letter/negative beats
+        it by at least this much. 0.0 = classic strict veto (score font).
+        The wave font needs a small margin: on real hardware the operator's
+        wave '9' matched 0.852 with the best negative at 0.854 — a 0.002
+        photo-finish loss that silently dropped every wave-9 transition.
+        Genuine letters beat their digit lookalike by 0.05-0.35, so a small
+        margin costs nothing there."""
         T = self.templates if templates is None else templates
         d = 1.0 - np.abs(T - g[None]).mean(axis=(1, 2))
         i = int(d.argmax())
         s = float(d[i])
+        digit = int(labels[i]) if labels is not None else i
         if self.negatives is not None and len(self.negatives):
             neg = 1.0 - np.abs(self.negatives - g[None]).mean(axis=(1, 2))
-            if float(neg.max()) >= s:
-                return i, 0.0                 # looks more like a letter
-        return i, s
+            if float(neg.max()) >= s + neg_margin:
+                return digit, 0.0             # looks more like a letter
+        return digit, s
 
-    def _read_number(self, mask, max_digits, templates=None, threshold=None):
+    def _read_number(self, mask, max_digits, templates=None, threshold=None,
+                     labels=None, neg_margin=0.0):
         """Left-to-right digit read of a strip mask. Returns (value|None,
         min_match). Rejects if any glyph is sub-threshold or the count is
         implausible. Trailing non-digit glyphs (letters, icons) are allowed:
@@ -197,7 +221,8 @@ class HudReader:
             return None, 0.0
         digits, worst = [], 1.0
         for b in boxes[:max_digits + 6]:
-            d, s = self._match_digit(normalize_glyph(mask, b), templates)
+            d, s = self._match_digit(normalize_glyph(mask, b), templates,
+                                     labels=labels, neg_margin=neg_margin)
             if s < th:
                 break                         # first non-digit ends the number
             digits.append(d)
@@ -228,7 +253,8 @@ class HudReader:
         if self.wave_templates is not None:
             wave, w_conf = self._read_number(
                 w_mask, max_digits=3, templates=self.wave_templates,
-                threshold=self.wave_threshold)
+                threshold=self.wave_threshold, labels=self.wave_labels,
+                neg_margin=0.02)
         else:
             wave, w_conf = None, 0.0    # no wave font harvested — don't guess
 

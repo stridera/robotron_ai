@@ -182,7 +182,10 @@ class HardwareTelemetry:
             now = time.time()
             if now - getattr(self, '_wf_t', 0) > 60:
                 self._wf_t = now
-                self._wf_i = getattr(self, '_wf_i', 0) % 3 + 1
+                # 6 rotating slots, not 3: with 3, late-game failures
+                # overwrote the early ones and the wave-8 fail frames we
+                # needed never survived a session (hardware round 7).
+                self._wf_i = getattr(self, '_wf_i', 0) % 6 + 1
                 try:
                     import cv2
                     cv2.imwrite(os.path.join(
