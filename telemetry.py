@@ -177,8 +177,20 @@ class HardwareTelemetry:
             self._save_frame("hud_unreadable", frame)
         # Wave-read failures WITH a good score read are the interesting
         # class (round 4: single-digit waves unreadable on one rig, cause
-        # undiagnosable without the pixels). Keep a rotating set.
+        # undiagnosable without the pixels). Keep a rotating set — but only
+        # frames where the wave strip actually CONTAINS ink: score-ok +
+        # wave-None is usually just the HUD flash phase or the wave-intro
+        # sweep (wave line legitimately absent), and in round 8 those
+        # benign blanks filled all six slots while the one genuinely
+        # unreadable display (wave 8's) never got captured.
         if reading['score'] is not None and reading['wave'] is None:
+            try:
+                from .hud_ocr import WAVE_STRIP
+                wy0, wy1, wx0, wx1 = WAVE_STRIP
+                if int(frame[wy0:wy1, wx0:wx1, :].max()) < 60:
+                    return                       # strip is blank — benign
+            except Exception:
+                pass
             now = time.time()
             if now - getattr(self, '_wf_t', 0) > 60:
                 self._wf_t = now

@@ -255,6 +255,11 @@ class HudReader:
                 w_mask, max_digits=3, templates=self.wave_templates,
                 threshold=self.wave_threshold, labels=self.wave_labels,
                 neg_margin=0.02)
+            if wave == 0:
+                # There is no wave 0: this is a two-digit wave whose leading
+                # digit dropped out (a flash-dimmed '1' sliver leaves "10"
+                # reading as "0" — seen live in round-8 telemetry).
+                wave, w_conf = None, 0.0
         else:
             wave, w_conf = None, 0.0    # no wave font harvested — don't guess
 
