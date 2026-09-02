@@ -218,7 +218,7 @@ class HudReader:
         th = self.threshold if threshold is None else threshold
         boxes = segment_glyphs(mask)
         if not boxes:
-            return None, 0.0
+            return None, 0.0, 0
         digits, worst = [], 1.0
         for b in boxes[:max_digits + 6]:
             d, s = self._match_digit(normalize_glyph(mask, b), templates,
@@ -228,8 +228,11 @@ class HudReader:
             digits.append(d)
             worst = min(worst, s)
         if not digits or len(digits) > max_digits:
-            return None, 0.0
-        return int("".join(map(str, digits))), worst
+            return None, 0.0, 0
+        # The glyph COUNT is returned separately from the value: a fresh
+        # game shows the score as "00", two glyphs for the number 0. Anyone
+        # anchoring on len(str(value)) lands one glyph short.
+        return int("".join(map(str, digits))), worst, len(digits)
 
     def read(self, frame):
         """frame: 1280x720 BGR. Returns dict(score, wave, lives, conf) — any
@@ -241,7 +244,7 @@ class HudReader:
         w_strip = frame[wy0:wy1, wx0:wx1]
 
         s_mask = _score_mask(s_strip)
-        score, s_conf = self._read_number(s_mask, max_digits=8)
+        score, s_conf, s_glyphs = self._read_number(s_mask, max_digits=8)
         # Every Robotron score event is a multiple of 25, so any read that
         # isn't ≡0 (mod 25) is a misread — a torn prefix ('9597' from
         # 95975) or menu digit-art ('2084'). One line kills both classes
@@ -251,7 +254,7 @@ class HudReader:
 
         w_mask = _wave_mask(w_strip)
         if self.wave_templates is not None:
-            wave, w_conf = self._read_number(
+            wave, w_conf, _ = self._read_number(
                 w_mask, max_digits=3, templates=self.wave_templates,
                 threshold=self.wave_threshold, labels=self.wave_labels,
                 neg_margin=0.02)
@@ -269,8 +272,13 @@ class HudReader:
             # count = extent / pitch.
             boxes = segment_glyphs(s_mask)
             if boxes:
-                last_digit_x = boxes[len(str(score)) - 1][2] \
-                    if len(boxes) >= len(str(score)) else boxes[-1][2]
+                # Anchor on the last glyph the score read CONSUMED, not on
+                # len(str(score)): a new game displays "00", and anchoring
+                # one glyph short swept the second '0' into the icon extent
+                # (lives read 4 with 2 icons on screen), so the first real
+                # score event "dropped" lives by 2 — the phantom death at
+                # the start of every session's first game (round 10).
+                last_digit_x = boxes[min(s_glyphs, len(boxes)) - 1][2]
                 c_mask = _color_mask(s_strip)
                 c_mask[:, :last_digit_x + 4] = False
                 c_mask[:, last_digit_x + 4 + LIVES_WINDOW_PX:] = False
@@ -368,6 +376,7 @@ class VisionBookkeeper:
                                     # episode; 0.0 = none seen yet (permissive)
         self._last_death_t = 0.0
         self._last_wave_t = 0.0
+        self._lives_since = 0.0     # when the current lives value was set
 
     def _stable(self, field, value):
         """Hysteresis: return the newly-accepted value or None."""
@@ -550,15 +559,22 @@ class VisionBookkeeper:
                 pass          # implausible jump — extent misread, ignore
             else:
                 if self.lives is not None and lv < self.lives \
-                        and t - self._last_death_t > 4.0:
+                        and t - self._last_death_t > 4.0 \
+                        and t - self._lives_since >= 3.0:
                     # Real deaths drop EXACTLY one life; a 2-drop is a noisy
                     # extent settling (this is what produced the skipped
                     # death numbers in the first hardware round). Count one,
-                    # at most one per 4s.
+                    # at most one per 4s, and only from a value that has
+                    # been HELD for 3s: a game-start / intro-junk read that
+                    # settles within a couple of seconds is not a death (a
+                    # real death sooner than 3s after the previous lives
+                    # change was already discarded by the 4s dedupe).
                     self.deaths += 1
                     self.wave_deaths += 1
                     self._last_death_t = t
                     self.on_event('death', deaths=self.deaths, wave=self.wave)
+                if lv != self.lives:
+                    self._lives_since = t
                 self.lives = lv
 
         # ── game over: HUD gone for a sustained stretch — AND the player is
