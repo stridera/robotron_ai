@@ -115,17 +115,38 @@ class HdmiSource(FrameSource):
         ~10px projectile sprites stay as crisp as the training data.
     """
 
-    def __init__(self, device=0, width: int = 1280, height: int = 720):
+    def __init__(self, device=0, width: int = 1280, height: int = 720,
+                 backend=None, fourcc=None, fps=None, cap_size=None):
+        """`backend`: None/'auto', 'msmf' or 'dshow'. `fourcc`: e.g. 'MJPG'
+        or 'YUY2'. `fps`: requested capture rate. `cap_size`: (w, h) to
+        request from the card (frames are downscaled to width x height for
+        the model). All None = the card's defaults — which on the operator's
+        rig delivered ~44% duplicate frames (hardware rounds 6-11); run
+        `--probe-capture` to measure every combination and pick the best."""
         import cv2
         import threading
         self.cv2 = cv2
-        self.cap = cv2.VideoCapture(device)
+        be = {None: cv2.CAP_ANY, "auto": cv2.CAP_ANY, "msmf": cv2.CAP_MSMF,
+              "dshow": cv2.CAP_DSHOW}[backend.lower() if backend else None]
+        self.cap = cv2.VideoCapture(device, be)
+        if fourcc:                              # format first: DSHOW wants it
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+        cw, ch = cap_size if cap_size else (width, height)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, cw)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, ch)
+        if fps:
+            self.cap.set(cv2.CAP_PROP_FPS, fps)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.w, self.h = width, height
         if not self.cap.isOpened():
             print(f"[hdmi] WARNING: capture device {device!r} did not open")
+        else:
+            v = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+            fcs = "".join(chr((v >> (8 * i)) & 0xFF) for i in range(4)).strip()
+            print(f"[hdmi] card reports {int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
+                  f"{int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} {fcs or '?'} "
+                  f"{self.cap.get(cv2.CAP_PROP_FPS):.0f}fps "
+                  f"(backend {backend or 'auto'})")
         # BACKGROUND CAPTURE THREAD (hardware round 2). The old path drained
         # the backend queue with 3 blocking grab()s per read; on a real card
         # those block on frame boundaries and cost ~85 ms/tick — with GPU

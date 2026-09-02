@@ -62,6 +62,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help="frame source for yolo input")
     io.add_argument("--device", default=None,
                     help="HDMI capture device index or path (hdmi source)")
+    io.add_argument("--capture-backend", choices=["auto", "msmf", "dshow"],
+                    default="auto", help="capture API for the card (hdmi)")
+    io.add_argument("--capture-fourcc", default=None,
+                    help="capture pixel format to request, e.g. MJPG or YUY2")
+    io.add_argument("--capture-fps", type=int, default=None,
+                    help="capture rate to request from the card, e.g. 60")
+    io.add_argument("--capture-res", default=None,
+                    help="capture size to request, e.g. 1920x1080 (downscaled "
+                         "to 1280x720 for the model)")
+    io.add_argument("--probe-capture", action="store_true",
+                    help="measure every capture backend/format on --device and "
+                         "print the best flags, then exit (no game needed)")
     io.add_argument("--port", default=None,
                     help="serial port for the hardware controller (e.g. COM3)")
     io.add_argument("--baud", type=int, default=9600, help="serial baud rate")
@@ -214,7 +226,17 @@ def _build_perception(cfg):
         dev = cfg.device
         if isinstance(dev, str) and dev.isdigit():
             dev = int(dev)
-        source = perc.HdmiSource(device=0 if dev is None else dev)
+        cap_size = None
+        if cfg.capture_res:
+            try:
+                cw, ch = (int(v) for v in str(cfg.capture_res).lower().split("x"))
+                cap_size = (cw, ch)
+            except ValueError:
+                sys.exit(f"error: --capture-res wants WxH, got {cfg.capture_res!r}")
+        source = perc.HdmiSource(device=0 if dev is None else dev,
+                                 backend=cfg.capture_backend,
+                                 fourcc=cfg.capture_fourcc,
+                                 fps=cfg.capture_fps, cap_size=cap_size)
     else:
         source = perc.XeniaWindowSource()
     if not os.path.exists(cfg.weights):
@@ -236,6 +258,15 @@ def _build_perception(cfg):
 
 def main(argv=None) -> None:
     cfg = resolve_config(argv)
+    if cfg.probe_capture:
+        # Measurement only: no game, no controller, no model. Prints the
+        # ranked capture configurations and the flags to use.
+        from . import capture_probe
+        dev = cfg.device
+        if isinstance(dev, str) and dev.isdigit():
+            dev = int(dev)
+        capture_probe.probe(0 if dev is None else dev)
+        return
     print(f"[cli] mode={cfg.mode} input={cfg.input} output={cfg.output} "
           f"source={cfg.source if cfg.input == 'yolo' else '-'} "
           f"lag={cfg.lag_ticks} lead={cfg.player_lead} "

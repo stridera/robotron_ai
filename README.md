@@ -208,6 +208,11 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--output {vgamepad,serial}` | mode preset | Controller (hardware forces `serial`) |
 | `--source {window,hdmi}` | mode preset | Frame source for `yolo` input |
 | `--device N` | `0` | HDMI capture device index/path |
+| `--probe-capture` | off | Measure every capture backend/format on `--device`, print the best flags, exit |
+| `--capture-backend {auto,msmf,dshow}` | `auto` | Capture API for the card |
+| `--capture-fourcc FMT` | card default | Pixel format to request (`MJPG`, `YUY2`) |
+| `--capture-fps N` | card default | Capture rate to request (e.g. `60`) |
+| `--capture-res WxH` | `1280x720` | Size to request from the card (downscaled to 1280x720) |
 | `--port COMx` | `COM3` | Serial port for the hardware controller |
 | `--baud N` | `9600` | Serial baud rate |
 | `--weights PATH` | bundled `robotron.pt` | YOLO detector weights |
@@ -247,6 +252,24 @@ override with the matching env var only if you're experimenting):
   can't, it rescales the planner's per-step kinematics to the real cadence
   instead of silently mispredicting (this is what makes slower hardware rigs
   behave correctly).
+
+### Capture card tuning (`--probe-capture`)
+
+The bot can only react to frames that actually arrive. A capture card left on
+its default mode can quietly deliver far fewer *unique* frames than the
+15 Hz decision loop consumes (one real rig: 15.0 Hz loop, but 44% of frames
+were duplicates — the bot saw ~8 fresh images a second). Which backend and
+pixel format is fastest depends on the card, so measure it once:
+
+```
+.venv\Scripts\python -m robotron_ai --mode hardware --probe-capture --device 0
+```
+
+Leave the console on a moving picture (a game or the attract mode). It tries
+every backend × format × rate × size combination for a few seconds each
+(~2-3 minutes), prints them ranked by unique frames/s, and ends with the
+exact `--capture-*` flags to add to your normal command. You want 15+ unique
+frames/s; 30+ means every decision tick sees a brand-new frame.
 
 ### Config file
 
