@@ -271,6 +271,14 @@ every backend × format × rate × size combination for a few seconds each
 exact `--capture-*` flags to add to your normal command. You want 15+ unique
 frames/s; 30+ means every decision tick sees a brand-new frame.
 
+In `report.json`, `frames.capture` then shows what the card delivered during
+the session (`pump_hz`, and `pump_changed_hz` for frames that actually
+differed from the previous one), and `frames.stale_frac` the share of
+decision ticks whose frame had not changed since the previous tick — the
+number to watch. (`duplicate_frac` is an older, coarser test kept for
+comparison with earlier reports; it overstates duplicates on Robotron's
+mostly-black arena.)
+
 ### Config file
 
 Put common settings in a JSON file instead of flags. Command-line flags override

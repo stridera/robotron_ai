@@ -137,6 +137,16 @@ class HardwareTelemetry:
                 np.array_equal(sig, self._last_frame_sig):
             self.dup_frames += 1
         self._last_frame_sig = sig
+        # True change test (round 12): the 64-point signature above cannot
+        # tell two gameplay frames apart when nothing moved across those 64
+        # pixels — on a mostly-black arena that is often — so it overstated
+        # duplicates. This compares 64x36 area-averaged thumbnails.
+        import cv2
+        tiny = cv2.resize(frame, (64, 36), interpolation=cv2.INTER_AREA)
+        prev = getattr(self, "_last_tiny", None)
+        if prev is not None and cv2.absdiff(tiny, prev).max() <= 8:
+            self.stale_frames = getattr(self, "stale_frames", 0) + 1
+        self._last_tiny = tiny
 
     def tick(self, mv, player_xy, viz_boxes, frame):
         self.ticks += 1
@@ -247,6 +257,11 @@ class HardwareTelemetry:
             "frames": {
                 "delivered_hz": round(self.frames / el, 2),
                 "duplicate_frac": round(self.dup_frames / max(self.frames, 1), 4),
+                # loop ticks whose frame did not change vs the previous tick
+                # (full-frame test — the number to trust from round 12 on)
+                "stale_frac": round(getattr(self, "stale_frames", 0)
+                                    / max(self.frames, 1), 4),
+                "capture": getattr(self, "capture_stats", None),
             },
             "detection": {
                 "player_visible_frac": round(self.player_seen / max(self.ticks, 1), 4),
@@ -268,10 +283,12 @@ class HardwareTelemetry:
             "ticks": self.ticks,
         }
 
-    def finalize(self, tick_stats=None, center_off=None):
+    def finalize(self, tick_stats=None, center_off=None, capture_stats=None):
         if self._finalized:
             return
         self._finalized = True
+        if capture_stats:
+            self.capture_stats = capture_stats
         rep = self.report()
         if tick_stats:
             rep["tick"] = tick_stats

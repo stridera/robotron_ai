@@ -597,6 +597,9 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     finally:
         # Ctrl+C included: the friend's report must survive any exit.
         if telemetry is not None:
+            src = getattr(perception, 'source', None)
+            cap_stats = src.stats() if hasattr(src, 'stats') else None
             telemetry.finalize(tick_stats=clock.stats(),
                                center_off=getattr(perception,
-                                                  'center_measured', None))
+                                                  'center_measured', None),
+                               capture_stats=cap_stats)

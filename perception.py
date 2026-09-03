@@ -143,6 +143,8 @@ class HdmiSource(FrameSource):
         else:
             v = int(self.cap.get(cv2.CAP_PROP_FOURCC))
             fcs = "".join(chr((v >> (8 * i)) & 0xFF) for i in range(4)).strip()
+            if not fcs.isprintable() or not fcs.isascii():
+                fcs = f"0x{v & 0xFFFFFFFF:08x}"     # DirectShow custom formats
             print(f"[hdmi] card reports {int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
                   f"{int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} {fcs or '?'} "
                   f"{self.cap.get(cv2.CAP_PROP_FPS):.0f}fps "
@@ -158,20 +160,48 @@ class HdmiSource(FrameSource):
         self._lock = threading.Lock()
         self._latest = None
         self._running = True
+        # Pump-side counters (hardware round 12): the card-delivered rate
+        # and how many of those frames actually CHANGED, measured where the
+        # frames arrive — independent of the decision loop. Telemetry's
+        # loop-side duplicate fraction alone could not say whether stale
+        # ticks came from the card, the pump, or the loop.
+        import time as _time
+        self.pump_frames = 0
+        self.pump_changed = 0
+        self.pump_t0 = _time.time()
+        self._pump_prev = None
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
 
     def _pump(self):
+        import time
+        cv2 = self.cv2
         while self._running:
             ok = self.cap.grab()
             if not ok:
-                import time
                 time.sleep(0.02)
                 continue
             ok, frame = self.cap.retrieve()
             if ok and frame is not None:
+                self.pump_frames += 1
+                # Change test on a 64x36 area-average thumbnail: a sprite
+                # moving anywhere registers (a 64-pixel point sample on a
+                # mostly-black arena does not).
+                tiny = cv2.resize(frame, (64, 36), interpolation=cv2.INTER_AREA)
+                if self._pump_prev is None or \
+                        cv2.absdiff(tiny, self._pump_prev).max() > 8:
+                    self.pump_changed += 1
+                self._pump_prev = tiny
                 with self._lock:
                     self._latest = frame
+
+    def stats(self):
+        """Card-side rates since open: frames the pump received per second
+        and how many of them differed from the previous one."""
+        import time
+        el = max(time.time() - self.pump_t0, 1e-6)
+        return dict(pump_hz=round(self.pump_frames / el, 2),
+                    pump_changed_hz=round(self.pump_changed / el, 2))
 
     def read(self):
         with self._lock:
