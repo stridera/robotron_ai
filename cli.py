@@ -95,14 +95,17 @@ def build_parser() -> argparse.ArgumentParser:
     vis.add_argument("--threaded-eye", action="store_true",
                      help="run capture+inference on a background thread and "
                           "decide on the freshest result (implied by --eye-sync)")
-    vis.add_argument("--eye-sync", type=float, default=0.0, metavar="MS",
+    vis.add_argument("--eye-sync", type=float, default=55.0, metavar="MS",
                      help="eye-synchronised decisions: after MS ms since the "
                           "last decision, decide the moment the next eye "
                           "sample lands (e.g. 55 -> ~14 Hz, vision age 0.82 "
-                          "-> 0.51 ticks on the emulator). 0 = fixed clock")
-    vis.add_argument("--hold-action", type=int, default=0, metavar="N",
+                          "-> 0.51 ticks on the emulator). 0 = fixed clock. "
+                          "Default ON since 2026-09-04: deaths/wave -0.10, p=0.005")
+    vis.add_argument("--hold-action", type=int, default=4, metavar="N",
                      help="on a blind tick repeat the last stick command for "
-                          "up to N ticks instead of going neutral (0 = off)")
+                          "up to N ticks instead of going neutral (0 = off). "
+                          "Default 4: with eye-sync it was the best arm of the "
+                          "2026-09-04 factorial (NET +0.086 vs base -0.086)")
     vis.add_argument("--center-off", default=None,
                      help="manual box-center correction 'dx,dy' in px, added "
                           "to every detection (from offline analysis of the "

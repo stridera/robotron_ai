@@ -231,6 +231,9 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--imgsz N` | model native (1280) | Inference size; `640` = ~3-4x faster on CPU rigs |
 | `--visualize-plain` | off | With `--visualize`: raw feed, no boxes/arrows |
 | `--no-hud` | off | Hardware: disable HUD OCR score/wave/death tracking |
+| `--threaded-eye` | off | Capture+inference on a background thread; decisions use the freshest result |
+| `--eye-sync MS` | `55` | Eye-synchronised decisions: after MS ms, decide the moment the next eye sample lands (~14 Hz; vision age 0.82 → 0.51 ticks on the emulator). On by default since the 2026-09-04 factorial: deaths/wave 1.10 vs 1.20 (p=0.005). `--eye-sync 0` restores the fixed 15 Hz clock |
+| `--hold-action N` | `4` | On a blind tick repeat the last stick command for up to N ticks instead of stopping. Flat alone, but eye-sync + hold-action 4 was the best arm of the factorial (NET lives/wave +0.086 vs −0.086 base, 14/20 games reached the W26 cap vs 6/20). `--hold-action 0` disables |
 | `--hud-log PATH` | `logs/hud_waves.jsonl` | Hardware: per-wave JSONL from HUD OCR (ab_yolo-compatible) |
 | `--visualize` / `--show-overlay` | off | Live annotated overlay window (see below) |
 | `--simulate` | off | Don't open real devices — print output (testing) |
