@@ -221,6 +221,75 @@ class HdmiSource(FrameSource):
             self.cap.release()
 
 
+# ── Threaded eye (hardware round 13) ────────────────────────────────────────
+class ThreadedVisionPerception:
+    """Runs a VisionPerception's capture -> inference -> tracking pipeline on
+    a background thread as fast as it goes, and serves the FRESHEST result to
+    the decision loop. Why: with the eye inline, the planner's picture is a
+    mean ~13-17 ms older than it needs to be (it waits for the next clock
+    tick after inference lands) and the loop is capped by inference time.
+    The MAME lab priced vision age at ~0.09 lives/wave per 16.7 ms.
+
+    Wraps rather than subclasses: every attribute the harness/HUD/telemetry
+    read (last_frame, last_boxes, last_player_px, source, center_measured,
+    ...) is forwarded to the inner perception, which the thread updates.
+    `wait_new(seq, timeout)` lets the loop block until the next sample."""
+    MAX_AGE_S = 0.30            # older snapshot -> report blind
+
+    def __init__(self, inner):
+        import threading
+        self._inner = inner
+        self._lock = threading.Lock()
+        self._cond = threading.Condition()
+        self._latest = None      # (t, Observation)
+        self.seq = 0
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def __getattr__(self, name):            # forward everything else
+        return getattr(self._inner, name)
+
+    def _run(self):
+        import time as _t
+        while self._running:
+            try:
+                obs = self._inner.perceive(None)
+            except Exception as e:           # never let the eye die silently
+                print(f"[eye] error: {e}", flush=True)
+                _t.sleep(0.05)
+                continue
+            if self._inner.last_frame is None:
+                _t.sleep(0.01)
+                continue
+            with self._lock:
+                self._latest = (_t.perf_counter(), obs)
+            with self._cond:
+                self.seq += 1
+                self._cond.notify_all()
+
+    def perceive(self, state):
+        import time as _t
+        with self._lock:
+            latest = self._latest
+        if latest is None or _t.perf_counter() - latest[0] > self.MAX_AGE_S:
+            return Observation(None, [])
+        return latest[1]
+
+    def wait_new(self, after_seq, timeout=0.08):
+        """Block until a sample newer than `after_seq` is published (or
+        timeout). Returns the current sequence number."""
+        with self._cond:
+            self._cond.wait_for(lambda: self.seq > after_seq, timeout=timeout)
+            return self.seq
+
+    def reset(self):
+        self._inner.reset()
+
+    def stop(self):
+        self._running = False
+
+
 # ── Vision perception (YOLO) ────────────────────────────────────────────────
 # YOLO class name -> engine entity name.
 CLS_TO_NAME = {

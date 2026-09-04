@@ -90,6 +90,19 @@ class TickClock:
                       f"correct; pass --hz {ach:.0f} to stop this churn, or "
                       f"speed up inference (install CUDA torch).",
                       flush=True)
+        self._finish()
+
+    def mark(self):
+        """Eye-synchronised ticks: the loop already waited for a fresh eye
+        sample, so record the period and adapt WITHOUT sleeping or counting
+        an overrun."""
+        if self.last is None:
+            self.last = time.perf_counter()
+            self.next = self.last
+            return
+        self._finish()
+
+    def _finish(self):
         t = time.perf_counter()
         self.periods.append(t - self.last)
         self.last = t
@@ -471,7 +484,8 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                      visualizer=None, bookkeeper=None, hud_reader=None,
                      loop_games: bool = False, telemetry=None,
                      menu_start: bool = False, visualize_plain: bool = False,
-                     auto_lead: bool = False, games_limit: int = 0):
+                     auto_lead: bool = False, games_limit: int = 0,
+                     eye_sync_ms: float = 0.0, hold_action: int = 0):
     """Minimal loop for real hardware. Runs until interrupted (Ctrl+C). Plans and
     acts whenever the player is visible; goes neutral when it isn't.
 
@@ -498,6 +512,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             time.sleep(1.0)
     print(f"[harness] vision loop running at {hz:.0f} Hz - Ctrl+C to stop")
     blind = 0
+    last_cmd = None     # last (move, fire) sent (hold-action)
     hud_every = max(1, int(hz / 5))     # OCR ~5x/s is plenty for bookkeeping
     n = 0
     games_done = 0
@@ -589,11 +604,18 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                 blind += 1
                 if obs.entities:
                     brain.blind_tick(obs.entities)   # keep tracks ageing
-                controller.neutral()
+                if hold_action and last_cmd is not None and blind <= hold_action:
+                    # Hold-action: keep the last command through a blink
+                    # instead of snapping to a standstill.
+                    controller.move_shoot(*last_cmd)
+                    cur_mv, cur_fr = last_cmd
+                else:
+                    controller.neutral()
             else:
                 blind = 0
                 cur_mv, cur_fr = brain.decide(obs.player, obs.entities)
                 controller.move_shoot(cur_mv, cur_fr)
+                last_cmd = (cur_mv, cur_fr)
                 if debug:
                     print(f"[vision] p=({obs.player[0]:.0f},{obs.player[1]:.0f}) "
                           f"n={len(obs.entities)} mv={cur_mv} fr={cur_fr}")
@@ -603,7 +625,20 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             if visualizer is not None and visualizer.enabled:
                 _render_vision(visualizer, perception, cur_mv, cur_fr, blind,
                                plain=visualize_plain)
-            clock.wait()
+            if eye_sync_ms > 0 and hasattr(perception, "wait_new"):
+                # Eye-synchronised decision: wait out a cadence floor, then
+                # decide the moment the NEXT eye sample lands (the snapshot is
+                # ~1 ms old instead of a mean half-eye-period). Measured on the
+                # emulator: vision age 0.82 -> 0.51 ticks at ~14 Hz.
+                floor = (clock.last if clock.last is not None else time.perf_counter()) \
+                    + eye_sync_ms / 1000.0
+                rem = floor - time.perf_counter()
+                if rem > 0:
+                    time.sleep(rem)
+                perception.wait_new(perception.seq, timeout=0.08)
+                clock.mark()
+            else:
+                clock.wait()
     finally:
         # Ctrl+C included: the friend's report must survive any exit.
         if telemetry is not None:

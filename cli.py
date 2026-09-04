@@ -92,6 +92,17 @@ def build_parser() -> argparse.ArgumentParser:
                      help="use ByteTrack temporal smoothing instead of per-frame predict")
     vis.add_argument("--player-hold", type=int, default=6,
                      help="max blind frames to hold last player position")
+    vis.add_argument("--threaded-eye", action="store_true",
+                     help="run capture+inference on a background thread and "
+                          "decide on the freshest result (implied by --eye-sync)")
+    vis.add_argument("--eye-sync", type=float, default=0.0, metavar="MS",
+                     help="eye-synchronised decisions: after MS ms since the "
+                          "last decision, decide the moment the next eye "
+                          "sample lands (e.g. 55 -> ~14 Hz, vision age 0.82 "
+                          "-> 0.51 ticks on the emulator). 0 = fixed clock")
+    vis.add_argument("--hold-action", type=int, default=0, metavar="N",
+                     help="on a blind tick repeat the last stick command for "
+                          "up to N ticks instead of going neutral (0 = off)")
     vis.add_argument("--center-off", default=None,
                      help="manual box-center correction 'dx,dy' in px, added "
                           "to every detection (from offline analysis of the "
@@ -253,6 +264,10 @@ def _build_perception(cfg):
         except ValueError:
             sys.exit(f"error: --center-off wants 'dx,dy', got {cfg.center_off!r}")
     vp.collect_viz = cfg.visualize        # collect screen boxes for the overlay
+    if getattr(cfg, "threaded_eye", False) or getattr(cfg, "eye_sync", 0):
+        print("[cli] threaded eye: capture+inference on a background thread"
+              + (f", eye-sync floor {cfg.eye_sync:.0f} ms" if cfg.eye_sync else ""))
+        return perc.ThreadedVisionPerception(vp)
     return vp
 
 
@@ -342,7 +357,9 @@ def main(argv=None) -> None:
                                      menu_start=cfg.menu_start,
                                      visualize_plain=cfg.visualize_plain,
                                      auto_lead=cfg.auto_lead,
-                                     games_limit=cfg.games)
+                                     games_limit=cfg.games,
+                                     eye_sync_ms=cfg.eye_sync,
+                                     hold_action=cfg.hold_action)
         else:
             # Xenia: memory bookkeeping harness (works for memory OR vision input).
             from .engine.game_state import GameStateReader
