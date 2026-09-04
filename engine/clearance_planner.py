@@ -217,10 +217,16 @@ def clearance_search(sprites, fsm_mv, first_fire):
     for s in sprites:
         if s[2] == "Player":
             continue
-        wt, isch, speed, refl = _classify_threat(s[2], s[3], s[4])
+        # Velocities arrive in px per NOMINAL (66.7 ms) tick. The search
+        # steps are TICK_SCALE nominal ticks long (set_tick_scale), and the
+        # player already moves DXY*k per step — threats must move v*k per
+        # step too, or at a 30 Hz decision rate (k=0.5) every projectile
+        # flies twice as fast in the simulation as on screen (2026-09-03).
+        svx, svy = s[3] * TICK_SCALE, s[4] * TICK_SCALE
+        wt, isch, speed, refl = _classify_threat(s[2], svx, svy)
         if wt <= 0.0:
             continue
-        xs.append(s[0]); ys.append(s[1]); vxs.append(s[3]); vys.append(s[4])
+        xs.append(s[0]); ys.append(s[1]); vxs.append(svx); vys.append(svy)
         ws.append(wt); ch.append(isch); sp.append(speed); rf.append(refl)
         nm.append(s[2])
     if not xs:
