@@ -221,7 +221,7 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--player-hold N` | `6` | Max blind frames to hold the last player position |
 | `--hz F` | `15` | Decision rate — **leave at 15**; if the host can't hold it, the planner auto-rescales its kinematics to the measured cadence |
 | `--lag-ticks F` | `0.25` mem / `0.3` vis | Latency extrapolation (vision value is the live-calibrated measurement) |
-| `--player-lead F` | `0.45` mem / `1.5` vis | Player forward-prediction ticks (vision 1.5 validated: maxW 14.6→18.0, p=0.003) |
+| `--player-lead F` | `0.45` mem / `1.5` vis | Player forward-prediction ticks (vision 1.5 validated: maxW 14.6→18.0, p=0.003). On real hardware the auto-lead measures the actuation latency and sets lead = act + 0.5 ticks (MAME lab, 2026-09-03: at 1 tick of lag, 1.5 is optimal and 0.5 recovers nothing) |
 | `--vel-ema F` | `0.5` | Velocity EMA smoothing (1.0 = raw) |
 | `--no-frame-sync` | off | Disable 60 Hz frame-sync (memory input only) |
 | `--loop` | off | Xenia: replay games back-to-back |

@@ -520,7 +520,17 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                     prev = getattr(play_vision_game, '_lead_prev', None)
                     play_vision_game._lead_prev = st['median']
                     if prev == st['median']:
-                        want = min(max(st['median'] - 0.5, 0.3), 2.5)
+                        # lead = act + 0.5, NOT act - 0.5. The old rule
+                        # assumed the whole-tick-quantized median overstates
+                        # the latency by half a tick; the MAME lab (2026-09-03,
+                        # 40 games/arm, one tick of injected actuation lag)
+                        # measured the opposite: lead 0.5 recovered NOTHING
+                        # over no lead (NET -0.098 vs -0.091), lead 1.5 was
+                        # the optimum (+0.068), 2.0+ over-shoots. The operator's
+                        # rig measures act = 1.0 tick, so the old rule set 0.5
+                        # every session — ~0.17 lives/wave left on the table —
+                        # while the emulator's validated 1.5 fits act + 0.5.
+                        want = min(max(st['median'] + 0.5, 0.5), 2.5)
                         if abs(want - brain.player_lead_ticks) >= 0.25:
                             print(f"[brain] auto-lead: measured act "
                                   f"{st['median']:.1f} ticks (n={st['n']}) "
