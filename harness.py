@@ -439,6 +439,11 @@ def ensure_game_running(perception, hud_reader, controller,
     of any list, then the normal A presses run. Never used on the first
     recovery attempt: B is 'Exit Game' on some screens, so it is earned
     only by repeated failure of the safe path."""
+    # HARDWARE-SIM only (no-op when no Xenia window exists): Xenia ignores
+    # XInput while unfocused, so on the emulator rehearsal the A presses
+    # below reached nothing and the attract demo passed the in-game sense
+    # (seen live 2026-09-04: two smoke runs "played" the demo for 20 min).
+    _focus_xenia_window()
     if escape_first:
         print("[harness] recovery escalation: B (back out), UP x5, then A")
         controller.press_b()
@@ -465,9 +470,18 @@ def ensure_game_running(perception, hud_reader, controller,
             time.sleep(0.3)
         time.sleep(0.6)
     print("[harness] pressing A until a game is on (A is a no-op in-game)")
+    # At least 3 presses before trusting the sense: on a fresh boot the first
+    # A only dismisses the XBLA title layer, and the attract story screen
+    # behind it passes _sense_in_game (hulk sprite reads as a player, the
+    # "00" digits as a score) — the ladder then stopped after ONE press and
+    # sat on the attract loop for 20 minutes (hardware-sim, 2026-09-04, twice).
+    # A is a no-op during gameplay, so the extra presses cost nothing.
+    min_presses = 3
     for i in range(attempts):
         controller.press_a()
         time.sleep(1.0)
+        if i + 1 < min_presses:
+            continue
         if _sense_in_game(perception, hud_reader, seconds=2.0):
             print("[harness] gameplay (or attract demo) visible — playing; "
                   "if this was the demo, the game-over cycle retries")
