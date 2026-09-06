@@ -212,6 +212,64 @@ BRAIN_RESCUE_MULT = float(_os.environ.get('FSM_BRAIN_RESCUE_MULT', '1.0'))
 SPAWNER_FIRE = _os.environ.get('FSM_SPAWNER_FIRE', '0') == '1'
 SPAWNER_FIRE_R = float(_os.environ.get('FSM_SPAWNER_FIRE_R', '150'))
 
+# KITE mode (2026-09-05): the human strategy — keep moving around a loop so the
+# chasers (grunts, hulks, progs) bunch up BEHIND the player, sparks aimed at where
+# the player WAS pass behind, and the space ahead stays open. Death forensics on the
+# vision bot: 56% of deaths within 50 px of a wall, 35% boxed-in (<=2 free headings),
+# identical early and late — a reactive dodger drifts to walls and zigzags. Kite
+# replaces the IDLE fallback only (flee tiers above it are untouched): move toward a
+# point AHEAD on an ellipse around the field centre, persistent direction, flip when
+# an enemy blocks the way ahead. Civilians are still taken when within KITE_CIV_R;
+# the last few killables are hunted (KITE_HUNT_N) so waves end.
+KITE_MODE = int(_os.environ.get('FSM_KITE', '0'))   # 0 off, 1 idle-only, 2 circle-by-default (flee tiers overridden; the clearance search is the only dodge)
+KITE = KITE_MODE >= 1
+KITE_RX = float(_os.environ.get('FSM_KITE_RX', '200'))
+KITE_RY = float(_os.environ.get('FSM_KITE_RY', '140'))
+KITE_AHEAD = float(_os.environ.get('FSM_KITE_AHEAD', '0.6'))      # radians ahead on the loop
+KITE_CIV_R = float(_os.environ.get('FSM_KITE_CIV_R', '160'))      # grab civilians this close
+KITE_HUNT_N = int(_os.environ.get('FSM_KITE_HUNT_N', '3'))        # hunt when <= N killables left
+KITE_BLOCK_R = float(_os.environ.get('FSM_KITE_BLOCK_R', '110'))  # enemy this close ahead = blocked
+KITE_FLIP_COOLDOWN = int(_os.environ.get('FSM_KITE_FLIP_COOLDOWN', '20'))
+_KITE_KILLABLE_TYPES = {'Grunt', 'Brain', 'Sphereoid', 'Quark', 'Enforcer', 'Tank'}
+_KITE_THREAT_TYPES = _KITE_KILLABLE_TYPES | {'Hulk', 'Prog'}
+_kite_dir = 1
+_kite_cooldown = 0
+
+
+def kiteMove(playerLocation, threats):
+    """Heading toward the next point on the kite ellipse; flips direction when an
+    enemy sits within KITE_BLOCK_R inside a +-60 deg cone of the way ahead."""
+    global _kite_dir, _kite_cooldown
+    cx, cy = MAX_RIGHT / 2.0, MAX_TOP / 2.0
+    px, py = playerLocation[X_POS], playerLocation[Y_POS]
+    theta = math.atan2((py - cy) / max(KITE_RY, 1.0), (px - cx) / max(KITE_RX, 1.0))
+    if _kite_cooldown > 0:
+        _kite_cooldown -= 1
+
+    def target(direction):
+        a = theta + direction * KITE_AHEAD
+        return cx + KITE_RX * math.cos(a), cy + KITE_RY * math.sin(a)
+
+    def blocked(tx, ty):
+        hx, hy = tx - px, ty - py
+        hn = math.hypot(hx, hy) or 1.0
+        for ex, ey in threats:
+            dx, dy = ex - px, ey - py
+            d = math.hypot(dx, dy)
+            if 0 < d <= KITE_BLOCK_R and (dx * hx + dy * hy) / (d * hn) > 0.5:
+                return True
+        return False
+
+    tx, ty = target(_kite_dir)
+    if blocked(tx, ty) and _kite_cooldown == 0:
+        alt = target(-_kite_dir)
+        if not blocked(*alt):
+            _kite_dir = -_kite_dir
+            _kite_cooldown = KITE_FLIP_COOLDOWN
+            tx, ty = alt
+    return getMoveStick(getDistance(playerLocation, tx, ty), TOWARD, playerLocation)
+
+
 # Endgame hunt (2026-07-03): the idle fallback only ever pursued CHASE_ENEMIES and
 # family — a last remaining Grunt/Brain/Tank beyond the fire radius was NEVER
 # approached, so the FSM stood still (or got herded to a wall by hulk-flee) waiting
@@ -707,6 +765,8 @@ def chooseOutputs(objectList):
     adjacentIsShell = False
     nearestProjectileIsShell = False
     brainSeen = False   # brain-wave rescue aggression (see BRAIN_RESCUE_MULT)
+    kiteThreats = []    # KITE: enemy positions for the blocked-ahead check
+    kiteKillable = 0    # KITE: killables left (hunt the last few so waves end)
 
     projectileDistance = INVALID
     priorityEnemyDistance = INVALID
@@ -752,6 +812,11 @@ def chooseOutputs(objectList):
         """ skip the PLAYER and his BULLETs """
         if objType == PLAYER or objType == BULLET:
             continue
+
+        if KITE and objType in _KITE_THREAT_TYPES:
+            kiteThreats.append((objX, objY))
+            if objType in _KITE_KILLABLE_TYPES:
+                kiteKillable += 1
 
         if objType in PROJECTILES:
             _isShell = objType == 'TankShell'
@@ -1266,7 +1331,12 @@ def chooseOutputs(objectList):
             print("moveStick was INVALID until the end")
         # RESCUE_SEEK: rescue outranks hunting when idle — family is the life engine
         # (escalating 1000->5000 per rescue; extra man every 25k).
-        if RESCUE_SEEK and nearestCivilian != INVALID:
+        if (KITE and kiteKillable > KITE_HUNT_N
+                and not (nearestCivilian != INVALID and nearestCivilian[DISTANCE] <= KITE_CIV_R)):
+            moveStick = kiteMove(playerLocation, kiteThreats)
+            if DEBUG_LEVEL >= DEBUG_LOW:
+                print(f"kite move {moveStick} dir {_kite_dir}")
+        elif RESCUE_SEEK and nearestCivilian != INVALID:
             if DEBUG_LEVEL >= DEBUG_LOW:
                 print(f"rescue-seek toward civilian {nearestCivilian}")
             moveStick = getMoveStick(nearestCivilian, TOWARD, playerLocation)
@@ -1296,6 +1366,14 @@ def chooseOutputs(objectList):
                 print("moveStick default to Stay")
             moveStick = STAY
 
+    # KITE mode 2: circle by default. The FSM's flee moves are the zigzag that
+    # boxes the player in; replace them with the loop heading and leave dodging
+    # to the clearance search (it models every threat class with velocities and
+    # only deviates when the commanded heading is in danger). Civilian grabs
+    # within KITE_CIV_R and the endgame hunt keep their priority.
+    if (KITE_MODE >= 2 and kiteKillable > KITE_HUNT_N
+            and not (nearestCivilian != INVALID and nearestCivilian[DISTANCE] <= KITE_CIV_R)):
+        moveStick = kiteMove(playerLocation, kiteThreats)
     return [moveStick, fireStick]
 
 
