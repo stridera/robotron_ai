@@ -220,7 +220,7 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--track` | off | ByteTrack temporal smoothing vs per-frame predict |
 | `--player-hold N` | `6` | Max blind frames to hold the last player position |
 | `--hz F` | `15` | Decision rate — **leave at 15**; if the host can't hold it, the planner auto-rescales its kinematics to the measured cadence |
-| `--lag-ticks F` | `0.25` mem / `0.3` vis | Latency extrapolation (vision value is the live-calibrated measurement) |
+| `--lag-ticks F` | `0.25` mem / `0.7` vis | Entity latency extrapolation. Vision default raised 0.3 → 0.7 on 2026-09-06: the exact-state diagnostic showed the planner acted on entities ~1/3 tick behind the truth; A/B 0.2 / 0.7 / 1.2 gave NET lives/wave +0.01 / +0.155 / +0.08 and mean max wave 25.4 / 38.1 / 31.1 (p=0.001), record W58 |
 | `--player-lead F` | `0.45` mem / `1.5` vis | Player forward-prediction ticks (vision 1.5 validated: maxW 14.6→18.0, p=0.003). On real hardware the auto-lead measures the actuation latency and sets lead = act + 0.5 ticks (MAME lab, 2026-09-03: at 1 tick of lag, 1.5 is optimal and 0.5 recovers nothing) |
 | `--vel-ema F` | `0.5` | Velocity EMA smoothing (1.0 = raw) |
 | `--no-frame-sync` | off | Disable 60 Hz frame-sync (memory input only) |

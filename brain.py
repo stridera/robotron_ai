@@ -47,7 +47,7 @@ _ENGINE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine")
 # value over-extrapolated every threat by ~0.7 ticks (~9 px on a spark) — the
 # wrong-info-worse-than-none failure mode. Corrected to the measurement.
 DEFAULT_LAG_MEMORY = 0.25
-DEFAULT_LAG_VISION = 0.3
+DEFAULT_LAG_VISION = 0.7   # 2026-09-06: was 0.3; A/B 0.2/0.7/1.2 on Xenia -> 0.7 NET +0.155 vs +0.012, maxW 38.1 vs 25.4 (p=0.001). The oracle diagnostic showed the planner acted on entities ~1/3 tick BEHIND truth; 0.7 puts it slightly ahead, where exact-state play lives.
 # Player forward-prediction: the sent move takes ~2 ticks (measured from
 # vision response) to actuate; lead the player position along the last
 # command so we dodge from where the player WILL be.

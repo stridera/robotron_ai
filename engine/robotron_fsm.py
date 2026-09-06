@@ -230,6 +230,11 @@ KITE_CIV_R = float(_os.environ.get('FSM_KITE_CIV_R', '160'))      # grab civilia
 KITE_HUNT_N = int(_os.environ.get('FSM_KITE_HUNT_N', '3'))        # hunt when <= N killables left
 KITE_BLOCK_R = float(_os.environ.get('FSM_KITE_BLOCK_R', '110'))  # enemy this close ahead = blocked
 KITE_FLIP_COOLDOWN = int(_os.environ.get('FSM_KITE_FLIP_COOLDOWN', '20'))
+KITE_ORBIT_R = float(_os.environ.get('FSM_KITE_ORBIT_R', '170'))   # mode 3: standoff from the enemy centroid
+# ALWAYS_FIRE (2026-09-05): humans never stop shooting; the FSM holds fire unless a
+# target is inside a CLOSE_FIRE radius. When the fire stick would be idle, shoot the
+# nearest killable at any range (waves end sooner = less exposure; more score).
+ALWAYS_FIRE = _os.environ.get('FSM_ALWAYS_FIRE', '0') == '1'
 _KITE_KILLABLE_TYPES = {'Grunt', 'Brain', 'Sphereoid', 'Quark', 'Enforcer', 'Tank'}
 _KITE_THREAT_TYPES = _KITE_KILLABLE_TYPES | {'Hulk', 'Prog'}
 _kite_dir = 1
@@ -259,6 +264,33 @@ def kiteMove(playerLocation, threats):
             if 0 < d <= KITE_BLOCK_R and (dx * hx + dy * hy) / (d * hn) > 0.5:
                 return True
         return False
+
+    if KITE_MODE >= 3 and threats:
+        # Orbit the ENEMY CENTROID instead of the field centre: heading = tangent
+        # (persistent side) + a radial term that holds KITE_ORBIT_R standoff, plus a
+        # wall-avoid term. Keeps the pack behind/beside the player like a human loop.
+        cxm = sum(e[0] for e in threats) / len(threats)
+        cym = sum(e[1] for e in threats) / len(threats)
+        rx, ry = px - cxm, py - cym
+        r = math.hypot(rx, ry) or 1.0
+        ux, uy = rx / r, ry / r                     # radial unit (centroid -> player)
+        tx_, ty_ = -uy * _kite_dir, ux * _kite_dir  # tangent
+        radial = (KITE_ORBIT_R - r) / KITE_ORBIT_R  # >0 too close -> push outward
+        hx = tx_ + radial * ux
+        hy = ty_ + radial * uy
+        # wall avoidance: push away from any border closer than 90 px
+        m = 90.0
+        if px < m: hx += (m - px) / m
+        if px > MAX_RIGHT - m: hx -= (px - (MAX_RIGHT - m)) / m
+        if py < m: hy += (m - py) / m
+        if py > MAX_TOP - m: hy -= (py - (MAX_TOP - m)) / m
+        tx, ty = px + 60 * hx, py + 60 * hy
+        if blocked(tx, ty) and _kite_cooldown == 0:
+            _kite_dir = -_kite_dir
+            _kite_cooldown = KITE_FLIP_COOLDOWN
+            tx_, ty_ = -uy * _kite_dir, ux * _kite_dir
+            tx, ty = px + 60 * (tx_ + radial * ux), py + 60 * (ty_ + radial * uy)
+        return getMoveStick(getDistance(playerLocation, tx, ty), TOWARD, playerLocation)
 
     tx, ty = target(_kite_dir)
     if blocked(tx, ty) and _kite_cooldown == 0:
@@ -1374,6 +1406,11 @@ def chooseOutputs(objectList):
     if (KITE_MODE >= 2 and kiteKillable > KITE_HUNT_N
             and not (nearestCivilian != INVALID and nearestCivilian[DISTANCE] <= KITE_CIV_R)):
         moveStick = kiteMove(playerLocation, kiteThreats)
+    if ALWAYS_FIRE and fireStick in (STAY, INVALID):
+        _ft = _nearest_killable(nearestPriorityEnemy, nearestEnemy, nearestChaseEnemy,
+                                nearestKillableProjectile)
+        if _ft != INVALID:
+            fireStick = getFireStick(_ft)
     return [moveStick, fireStick]
 
 

@@ -121,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     brn.add_argument("--hz", type=float, default=15.0,
                      help="decision rate (do not change: planner is tuned for 15)")
     brn.add_argument("--lag-ticks", type=float, default=None,
-                     help="latency extrapolation (default: 0.25 memory / 0.3 vision)")
+                     help="entity latency extrapolation in ticks (default: 0.25 memory / 0.7 vision; 0.7 won the 2026-09-06 lead A/B)")
     brn.add_argument("--player-lead", type=float, default=None,
                      help="player forward-prediction ticks "
                           "(default: 0.45 memory / 1.5 vision)")

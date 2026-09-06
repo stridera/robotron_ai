@@ -1,4 +1,4 @@
-# Robotron 2084 bot — state of play (2026-09-05)
+# Robotron 2084 bot — state of play (2026-09-06)
 
 A single-page orientation for anyone (or any fresh context) picking this up.
 Facts only; every number below comes from a logged run. Deeper detail lives in
@@ -37,7 +37,7 @@ The dev copies used for experiments are `robotron/brain_yolo.py` (vision bot),
 `robotron/brain_champion.py` (memory-input bot), `robotron/robotron_fsm.py`,
 `robotron/clearance_planner.py`; `robotron/ab_yolo.py` runs interleaved A/Bs on
 Xenia; `robotron/mame_lab.py` + `mame_run.sh` + `native_stats.py` run the MAME
-proxy. The production and dev FSM copies are kept byte-identical.
+proxy. The production and dev FSM copies are re-synced after each experiment (dev gains opt-in knobs first; a fresh-context review on 2026-09-06 caught one lag). The dev clearance planner additionally carries no-op-by-default experiment knobs (ACT_LAG, STICKY, WALL_W, MAXCLR, PROJ_W) that the production planner does not.
 
 ## 3. How we measure
 
@@ -80,7 +80,8 @@ bookkeeping flawless, 15 Hz, stale frames 3.5%.
 11/26 past W30 in the first batch, records W42, W50 (1.38M), later W55 (1.49M,
 on a kite arm). Before this week the all-time vision best was W26.
 
-**Where the lives go now**: W5-25 NET ≈ +0.05; **W25-40 deaths/wave 1.36-1.50,
+**Where the lives go now** (50-game uncapped batch; the factorial's +0.086 was a
+20-game capped run): W5-25 NET ≈ +0.05; **W25-40 deaths/wave 1.36-1.50,
 NET ≈ −0.24**; the bank runs out near W35. Deaths cluster 8-20 s into a wave
 (median 16 s), 0% at wave start. Late deaths have the same structure as early
 ones (56% within 50 px of a wall, 35% boxed-in with <=2 free headings, same
@@ -96,8 +97,8 @@ Latency / loop
 | 30 Hz decision loop | dead | Xenia maxW 8.5 vs 20.4 p<.001; MAME NET −0.40 |
 | eye-sync | **ship** | above |
 | hold-action | ship with eye-sync | flat alone, best arm combined |
-| TensorRT engine (detector 21.5 -> 9.2 ms) | no effect at any depth; optional | 16/arm early band, 12/arm uncapped: d/w unchanged |
-| vision-age cost curve | 0.09 lives/wave per 16.7 ms of age | MAME LAB_AGE_FRAMES 0..4 |
+| TensorRT engine (detector 21.5 -> 9.2 ms) | no measurable effect (below the resolution of 16/arm + 12/arm); optional | d/w unchanged in both A/Bs |
+| vision-age cost curve | NET by age: 0f +0.22, 1f +0.20, 2f +0.11, 3f +0.03, 4f −0.06 (non-linear; ~0.02/frame near zero, ~0.09/frame at 1-2 frames) | MAME LAB_AGE_FRAMES 0..4 |
 | lead rule act+0.5 (was act−0.5) | ship (round 12) | MAME 40/arm; 1.0-1.5 flat optimum |
 
 Planner knobs on the MAME proxy (all flat or negative, ≥144 games/arm)
@@ -126,11 +127,37 @@ Dead ends not to reopen: start games at W24 by memory poke (0x82388E20 is a
 display mirror; slot-1 "wave" word is a frame counter); wave-start opening
 moves (0% spawn-in deaths); MAME late band as a proxy.
 
+## 5b. 2026-09-06: the age finding and the entity-lead fix (SHIPPED as default)
+
+Exact-state diagnostic (memory entities fed through the unchanged vision loop):
+fresh exact state rides W100+ (censored at 16.6M points); exact state aged one
+decision tick plays like vision (deaths/wave 1.15 vs 1.14); aging only the
+player costs nothing, aging only the entities costs everything. The ~34 ms of
+age is upstream of our capture (emulator presentation; the console will be the
+same): WGC capture and TensorRT did not reduce the measured lag. So age is
+compensated, not removed: the planner extrapolated entities by only 0.2 tick
+against a measured 0.55-tick lag, i.e. it acted on positions ~1/3 tick behind
+the truth. A/B on real vision (8 games/arm, W5-25):
+
+| entity lead (ticks) | deaths/wave | score/wave | NET | mean max wave |
+|---|---|---|---|---|
+| 0.2 (old default) | 1.106 | 27.9k | +0.01 | 25.4 |
+| **0.7 (new default)** | **1.024** | **29.5k** | **+0.155** | **38.1 (p=0.001)** |
+| 1.2 | 1.077 | 28.8k | +0.08 | 31.1 |
+
+Every 0.7 game reached W28+; record W58. Production `--lag-ticks` vision default
+0.3 -> 0.7; dev `ROBOTRON_YOLO_LAG_TICKS` 0.2 -> 0.7. Late band (W25-40) is
+still ~1.37 deaths/wave; bracketing 0.5/0.9 and late-band work are next.
+Closed the same day: real-STAY fix (+0.004), model-based threat advance
+(−0.026), capture path changes (no lag reduction).
+
 ## 6. Open questions / next levers, ranked
 
-1. **Hardware latency (Eric's side).** His rig has capture + console latency
-   the emulator does not; vision age is the one lever with a measured curve.
-   Round 13 build is ready; expectation is a larger gain there than here.
+1. **Hardware input freshness (Eric's side).** His rig's *actuation* is faster
+   than the emulator's (act = 1.0 tick vs 2.0), but its *capture* is worse
+   (stale/duplicate frames ~36%). Vision age is the one lever with a measured
+   curve, so eye-sync should help there; round 13 build is ready. The curve is
+   a MAME proxy finding, not a validated console forecast.
 2. **A planner that couples movement and aiming** the way a human circuit
    does. Circling alone did nothing because our fire logic is independent of
    where we walk. This is a design project, not a knob.
@@ -138,6 +165,14 @@ moves (0% spawn-in deaths); MAME late band as a proxy.
    band waves per game that reaches it). Any candidate needs ~40 games/arm.
 4. Running now (2026-09-05 night): MAME evolver with 288-game candidates
    (`~/mame_logs/evolve288/`); Xenia depth batch of the shipping config.
+
+## 6b. Known quirk under test (found by fresh-context review, 2026-09-06)
+
+All bots (production `brain.py`, dev `brain_champion.py`, `mame_lab.py`) map
+the FSM's STAY output to direction 1 = UP: the bot never stands still; every
+"hold position" decision walks toward the top wall. Consistent across the
+proxy and Xenia, so the proxy is still valid, but it is a plausible contributor
+to the wall-death signature. A STAY-as-neutral variant is being tested.
 
 ## 7. Operating rules that cost us time to learn
 
