@@ -116,6 +116,11 @@ Planner knobs on the MAME proxy (all flat or negative, ≥144 games/arm)
 | **KITE mode 2** (circle by default, clearance search dodges) | 144: d/w −0.04 but −0.026 NET; tuned (grab 300, ahead 0.9) +0.036 at 144 -> **−0.011 CI[−0.031,+0.010] at 576**; Xenia 12/arm +0.016 ns. **Null.** |
 | KITE mode 3 (orbit the enemy centroid) | −0.074* |
 | ALWAYS_FIRE (shoot nearest killable when fire idle) | d/w −0.026 (real, small), score −1.4%, NET +0.011 CI[−0.006,+0.029]. Parked. |
+| real STAY (FSM STAY as neutral stick, planner-checked) | +0.004 ns (288/arm) |
+| model-based threat advance (VSEARCH_AGE_ADVANCE) | −0.026 CI[−0.057,+0.003] |
+| spawner-priority fire incl. spheroids/quarks at 300 px | −0.021 ns; score −2.6% (288/arm) |
+| exit-preservation cost (VSEARCH_EXIT_W 6 / 2) | early band −0.031 / +0.003; late band on exact state: see 6 |
+| class-specific projectile lead (1.0 / 1.3 vs 0.7) | null on Xenia (8/arm) and proxy |
 
 Bookkeeping / capture (all shipped, rounds 6-12): color-agnostic HUD OCR,
 multi-variant wave templates (Eric's '8'), deaths = lives-drop only, no border
@@ -188,8 +193,10 @@ Closed (do not reopen without a new mechanism): 30 Hz loop; kite/orbit
 circling; wall repulsion / max-clearance / larger margins; threat-field;
 edge-deflect; spawner-priority fire (brains, and spheroids/quarks at 300 px);
 brain-wave rescue multiplier; always-fire; real-STAY; model-based threat
-advance; evolved-constant search at 48 or 288 games/candidate; TensorRT and
-WGC capture (age is upstream); wave-start scripts; W24 memory poke.
+advance; class-specific projectile lead; exit-preservation cost (early-band
+loss at weight 6, null at weight 2; exact-state late band pending/null);
+evolved-constant search at 48 or 288 games/candidate; TensorRT and WGC
+capture (age is upstream); wave-start scripts; W24 memory poke.
 
 ## 6b. Known quirk under test (found by fresh-context review, 2026-09-06)
 
