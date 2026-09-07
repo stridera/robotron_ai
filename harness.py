@@ -13,6 +13,7 @@ import time
 from collections import deque
 
 from . import coords
+from . import hud_ocr
 from .engine import clearance_planner as _cp
 from .visualize import VizOverlay, dir_name
 
@@ -400,6 +401,15 @@ def _sense_in_game(perception, hud_reader, seconds=3.0, hz=5.0):
             saw_player = True
         frame = getattr(perception, "last_frame", None)
         if frame is not None:
+            if hud_ocr.is_attract_demo(frame):
+                # The attract demo passes score/player checks (it is real
+                # gameplay footage); its green spotlight vignette is the one
+                # thing a real game never draws. Treat it as NOT-in-game so the
+                # A-press ladder keeps trying and escalates to the escape
+                # sequence, instead of the bot ticking against the demo.
+                saw_player = saw_hud = False
+                time.sleep(1.0 / hz)
+                continue
             r = hud_reader.read(frame)
             if r['score'] is not None or r['wave'] is not None:
                 saw_hud = True

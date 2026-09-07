@@ -150,6 +150,25 @@ def normalize_glyph(mask, box):
     return out
 
 
+def is_attract_demo(frame):
+    """The XBLA attract demo renders a dim green spotlight vignette across the
+    whole arena; a real game is a black background with small, bright, saturated
+    sprites. Fraction of arena-interior pixels in the dim band [10,90] is ~0.6 in
+    the demo vs ~0.01 in a real game (sprites are >90, background <10), so the
+    signal is robust even in a crowded deep wave. Same rendering on console via
+    HDMI, so this holds for hardware too. Returns True if the frame is the demo.
+    """
+    try:
+        import numpy as np
+        h, w = frame.shape[:2]
+        ar = frame[int(h * 0.16):int(h * 0.86), int(w * 0.21):int(w * 0.79)]
+        g = (0.114 * ar[:, :, 0] + 0.587 * ar[:, :, 1] + 0.299 * ar[:, :, 2])
+        dim = float(((g >= 10) & (g <= 90)).mean())
+        return dim > 0.20
+    except Exception:
+        return False
+
+
 class HudReader:
     """Per-frame HUD reads via template matching. Load once, call read()."""
 
