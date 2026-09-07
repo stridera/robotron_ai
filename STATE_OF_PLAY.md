@@ -145,9 +145,12 @@ the truth. A/B on real vision (8 games/arm, W5-25):
 | **0.7 (new default)** | **1.024** | **29.5k** | **+0.155** | **38.1 (p=0.001)** |
 | 1.2 | 1.077 | 28.8k | +0.08 | 31.1 |
 
-Every 0.7 game reached W28+; record W58. Production `--lag-ticks` vision default
-0.3 -> 0.7; dev `ROBOTRON_YOLO_LAG_TICKS` 0.2 -> 0.7. Late band (W25-40) is
-still ~1.37 deaths/wave; bracketing 0.5/0.9 and late-band work are next.
+Every 0.7 game reached W28+; record W58. Bracketing run (8/arm): lead 0.5 ->
+NET +0.12, mean max wave 32.4; 0.7 -> +0.20, 34.5 (pooled 16 games: +0.175,
+36.3); 0.9 -> +0.11, 26.6. The optimum is a plateau from 0.5 to 0.9, so the
+setting is robust to the console's slightly different lag. Production
+`--lag-ticks` vision default 0.3 -> 0.7; dev `ROBOTRON_YOLO_LAG_TICKS` 0.2 ->
+0.7. Late band (W25-40) is still ~1.4 deaths/wave: the remaining frontier.
 Closed the same day: real-STAY fix (+0.004), model-based threat advance
 (−0.026), capture path changes (no lag reduction).
 
