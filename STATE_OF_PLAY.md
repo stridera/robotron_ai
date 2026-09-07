@@ -119,7 +119,7 @@ Planner knobs on the MAME proxy (all flat or negative, ≥144 games/arm)
 | real STAY (FSM STAY as neutral stick, planner-checked) | +0.004 ns (288/arm) |
 | model-based threat advance (VSEARCH_AGE_ADVANCE) | −0.026 CI[−0.057,+0.003] |
 | spawner-priority fire incl. spheroids/quarks at 300 px | −0.021 ns; score −2.6% (288/arm) |
-| exit-preservation cost (VSEARCH_EXIT_W 6 / 2) | early band −0.031 / +0.003; late band on exact state: see 6 |
+| exit-preservation cost (VSEARCH_EXIT_W 6 / 2) | early band −0.031 / +0.003; exact-state late band 1.147 vs 1.143 (null), early 0.87 vs 0.77 (worse), W60 caps 4/8 vs 7/8. Closed. |
 | class-specific projectile lead (1.0 / 1.3 vs 0.7) | null on Xenia (8/arm) and proxy |
 
 Bookkeeping / capture (all shipped, rounds 6-12): color-agnostic HUD OCR,
@@ -165,7 +165,7 @@ Where the late-band (W25-40) deaths/wave stands, from the exact-state harness:
 
 | input | W25-40 deaths/wave |
 |---|---|
-| exact state, fresh (oracle0) | 1.20 |
+| exact state, fresh (oracle0), lead 0.2 / 0.7 | 1.20 / 1.14 |
 | exact state aged ~1 tick, lead 0.7 | 1.33 |
 | real vision, lead 0.7 | 1.32-1.46 |
 | real vision, old lead 0.2 | 1.36-1.50 |
@@ -193,8 +193,8 @@ Closed (do not reopen without a new mechanism): 30 Hz loop; kite/orbit
 circling; wall repulsion / max-clearance / larger margins; threat-field;
 edge-deflect; spawner-priority fire (brains, and spheroids/quarks at 300 px);
 brain-wave rescue multiplier; always-fire; real-STAY; model-based threat
-advance; class-specific projectile lead; exit-preservation cost (early-band
-loss at weight 6, null at weight 2; exact-state late band pending/null);
+advance; class-specific projectile lead; exit-preservation cost (null late on
+exact state, loss early);
 evolved-constant search at 48 or 288 games/candidate; TensorRT and WGC
 capture (age is upstream); wave-start scripts; W24 memory poke.
 
