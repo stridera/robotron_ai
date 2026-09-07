@@ -154,20 +154,42 @@ setting is robust to the console's slightly different lag. Production
 Closed the same day: real-STAY fix (+0.004), model-based threat advance
 (−0.026), capture path changes (no lag reduction).
 
-## 6. Open questions / next levers, ranked
+## 6. Open questions / next levers, ranked (revised 2026-09-07)
 
-1. **Hardware input freshness (Eric's side).** His rig's *actuation* is faster
-   than the emulator's (act = 1.0 tick vs 2.0), but its *capture* is worse
-   (stale/duplicate frames ~36%). Vision age is the one lever with a measured
-   curve, so eye-sync should help there; round 13 build is ready. The curve is
-   a MAME proxy finding, not a validated console forecast.
-2. **A planner that couples movement and aiming** the way a human circuit
-   does. Circling alone did nothing because our fire logic is independent of
-   where we walk. This is a design project, not a knob.
-3. Late-band (W25-40) economy: only measurable on Xenia (~1 game/12 min, ~10
-   band waves per game that reaches it). Any candidate needs ~40 games/arm.
-4. Running now (2026-09-05 night): MAME evolver with 288-game candidates
-   (`~/mame_logs/evolve288/`); Xenia depth batch of the shipping config.
+Where the late-band (W25-40) deaths/wave stands, from the exact-state harness:
+
+| input | W25-40 deaths/wave |
+|---|---|
+| exact state, fresh (oracle0) | 1.20 |
+| exact state aged ~1 tick, lead 0.7 | 1.33 |
+| real vision, lead 0.7 | 1.32-1.46 |
+| real vision, old lead 0.2 | 1.36-1.50 |
+
+So after the lead fix, roughly 0.13 of the late-band gap is residual age and
+0.05-0.10 is detection quality under density; the planner itself (fresh exact
+state) is at 1.20 and still bleeds slightly (income ~1.15 lives/wave there).
+
+1. **Ship round 13 to Eric** (eye-sync, hold-action, lead 0.7, start-ladder
+   and demo-phantom fixes). Expect a larger relative gain on the console than
+   on the emulator if its lag is similar; the 0.5-0.9 plateau covers drift.
+2. **Residual age**: class-specific lead (projectiles vs chasers) and a
+   velocity tracker tuned on the oracle harness (exact velocities are
+   available there as ground truth). Test on Xenia W5-25 first (cheap), then
+   W25-40 at 40 games/arm.
+3. **Late-band planner economy**: even fresh exact state is ~break-even at
+   W25-40. Candidates in order: exit-preservation cost at the search horizon,
+   coupled move+fire (the "clear a route" idea), rescue-sequence value. Use
+   the oracle harness (fresh) to test planner changes without perception
+   noise, then confirm on vision.
+4. **Detection under density**: only worth attacking after 2 and 3; the
+   harness says it is the smallest of the three terms.
+
+Closed (do not reopen without a new mechanism): 30 Hz loop; kite/orbit
+circling; wall repulsion / max-clearance / larger margins; threat-field;
+edge-deflect; spawner-priority fire (brains, and spheroids/quarks at 300 px);
+brain-wave rescue multiplier; always-fire; real-STAY; model-based threat
+advance; evolved-constant search at 48 or 288 games/candidate; TensorRT and
+WGC capture (age is upstream); wave-start scripts; W24 memory poke.
 
 ## 6b. Known quirk under test (found by fresh-context review, 2026-09-06)
 
