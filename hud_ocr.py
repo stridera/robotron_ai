@@ -385,6 +385,7 @@ class VisionBookkeeper:
         self.max_score = 0
         self.last_valid_t = None
         self.game_over_fired = False
+        self._game_over_id = None
         self._pend = {}          # field -> (value, count)
         self._down = (None, 0)   # stuck-high score self-heal candidate
         self._up = (None, 0)     # stuck-low score self-heal candidate
@@ -439,7 +440,8 @@ class VisionBookkeeper:
 
     def _new_game(self, t):
         if self.wave is not None and not self.game_over_fired \
-                and self._progressed():
+                and self._progressed() and self._game_over_id != self.game_id:
+            self._game_over_id = self.game_id
             self.on_event('game_over', game=self.game_id, wave=self.max_wave,
                           score=self.max_score, deaths=self.deaths)
         self.game_id = f"{int(t * 1000):x}"
@@ -605,8 +607,10 @@ class VisionBookkeeper:
                 and t - getattr(self, '_last_player_t', 0) > self.GAME_OVER_S
                 and self.wave is not None):
             self.game_over_fired = True
-            self._log_wave(self.wave, t)
-            self.on_event('game_over', game=self.game_id, wave=self.max_wave,
-                          score=self.max_score, deaths=self.deaths)
+            if self._game_over_id != self.game_id:
+                self._game_over_id = self.game_id
+                self._log_wave(self.wave, t)
+                self.on_event('game_over', game=self.game_id, wave=self.max_wave,
+                score=self.max_score, deaths=self.deaths)
         return dict(score=self.score, wave=self.wave, lives=self.lives,
                     deaths=self.deaths)
