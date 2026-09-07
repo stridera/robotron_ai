@@ -593,11 +593,20 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                 # --games N: count completed games, exit cleanly at the limit
                 # (telemetry still written by the finally block).
                 if bookkeeper.game_over_fired and not prev_go:
-                    games_done += 1
-                    if games_limit and games_done >= games_limit:
-                        print(f"[harness] {games_done} games completed "
-                              f"(--games {games_limit}) — stopping")
-                        return
+                    # A real game over needs every life lost, so a "game" that
+                    # ends with ZERO deaths was the attract demo (seen on the
+                    # hardware-sim 2026-09-06: W1-4, 0 deaths, counted as a
+                    # completed game and satisfied --games 1). Don't count it;
+                    # the restart path below presses A again.
+                    if bookkeeper.deaths == 0:
+                        print(f"[harness] attract demo ended (W{bookkeeper.max_wave}, "
+                              f"0 deaths) — not a game; restarting")
+                    else:
+                        games_done += 1
+                        if games_limit and games_done >= games_limit:
+                            print(f"[harness] {games_done} games completed "
+                                  f"(--games {games_limit}) — stopping")
+                            return
                 prev_go = bookkeeper.game_over_fired
                 if bookkeeper.game_over_fired and loop_games:
                     controller.neutral()
