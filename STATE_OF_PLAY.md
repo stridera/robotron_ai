@@ -121,6 +121,8 @@ Planner knobs on the MAME proxy (all flat or negative, ≥144 games/arm)
 | spawner-priority fire incl. spheroids/quarks at 300 px | −0.021 ns; score −2.6% (288/arm) |
 | exit-preservation cost (VSEARCH_EXIT_W 6 / 2) | early band −0.031 / +0.003; exact-state late band 1.147 vs 1.143 (null), early 0.87 vs 0.77 (worse), W60 caps 4/8 vs 7/8. Closed. |
 | class-specific projectile lead (1.0 / 1.3 vs 0.7) | null on Xenia (8/arm) and proxy |
+| launch-lane prediction (virtual spark from each enforcer in range) | proxy flat; exact-state late band WORSE with slide (1.15 vs 1.02, p .08) |
+| spark wall-slide at full speed (planner physics) | exact-state late band worse (1.11 vs 1.02); proxy null at 576/arm. The existing per-axis clamp already slides sparks at along-wall speed and is the better model. |
 
 Bookkeeping / capture (all shipped, rounds 6-12): color-agnostic HUD OCR,
 multi-variant wave templates (Eric's '8'), deaths = lives-drop only, no border
@@ -184,6 +186,14 @@ velocity extrapolation can predict. It cannot recover events inside the
 aged interval — a projectile launched, an enemy re-aiming. Only reducing
 the age itself helps, and that is upstream in presentation and capture,
 where WGC and TensorRT showed no reduction.
+
+**Launch prediction (2026-09-08 overnight) closed too.** The last open
+mechanism — dodge the launch instead of the spark, via a virtual spark from
+each in-range enforcer — was flat on the proxy and worse on the exact-state
+late band, alone and combined with a full-speed wall-slide for sparks. The
+planner's existing wall model (spark slides at its along-wall speed) was
+already right; giving it full speed over-predicts wall danger and pushes the
+bot off the walls into the pack.
 
 **Verdict:** the shipped configuration is at the achievable ceiling for
 this architecture at this latency: mean W31, median 30, half of games past
