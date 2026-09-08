@@ -282,6 +282,26 @@ number to watch. (`duplicate_frac` is an older, coarser test kept for
 comparison with earlier reports; it overstates duplicates on Robotron's
 mostly-black arena.)
 
+### Game start, the attract demo, and game counting
+
+The harness starts and restarts games by pressing A (a no-op during play) and
+sensing gameplay on the video. Two things it handles that a naive loop gets wrong:
+
+- **The attract demo.** After a fresh boot or a game over the title cycles into
+  a self-playing demo that is real gameplay footage, so it passes the score and
+  player checks. The bot used to play against it forever. It is recognised by
+  the demo's dim green spotlight vignette across the arena (a real game is a
+  black background with bright, saturated sprites) and treated as not-in-game,
+  so the A-press ladder keeps trying and escalates to the escape sequence. Same
+  rendering over HDMI, so this holds on the console.
+- **One game over per game.** A game over is emitted once per game id. Without
+  that, the restart briefly re-read the lingering game-over screen and fired a
+  second identical game over, double-counting games so `--games N` stopped
+  early and the report carried a duplicate. A game over with zero deaths is the
+  demo ending, not a game, and is not counted.
+
+`--games N` therefore counts real completed games only.
+
 ### Config file
 
 Put common settings in a JSON file instead of flags. Command-line flags override

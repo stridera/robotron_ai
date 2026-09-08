@@ -51,7 +51,7 @@ at 576 before believing it** (the kite sweep's +0.036 regressed to −0.011).
 Reference points: memory-input champion on Xenia rides W100-158 at NET ≈ +0.07.
 Vision bot before this week: NET ≈ −0.09, mean max wave 13.5, best W26.
 
-## 4. Current shipping configuration (origin/main 60040dd, 2026-09-04)
+## 4. Current shipping configuration (origin/main 4e42ab2 runtime, 2026-09-07; docs through 17893c3)
 
 - **Eye-synchronised decisions** (`--eye-sync 55`, default on): the loop waits
   for the newest frame's detections and acts at once instead of ticking on a
@@ -161,6 +161,166 @@ setting is robust to the console's slightly different lag. Production
 Closed the same day: real-STAY fix (+0.004), model-based threat advance
 (−0.026), capture path changes (no lag reduction).
 
+## 5c. The economy investigation (2026-09-08) - income is capped
+
+Question: is the late band (W20-40, which repeats forever after W40) a bleed we
+could fix by earning more, or a death problem?
+
+**The late band is a rescue economy.** On XBLA every late wave has civilians
+(0% zero-rescue waves), ~90% of score is rescue bonus (1000 to 5000 escalating,
+then 5000 each), and kills are a few thousand per wave. Two wave types:
+
+| late-band wave type | share | civilians on field (peak) | rescued | left unrescued |
+|---|---|---|---|---|
+| ordinary | ~80% | ~9 | ~8 | ~1 (tapped) |
+| rich brain wave | ~20% | 25-26 | 8-15 | 10-18 |
+
+Measured with a `peak_civ` instrument on the exact-state bot (max civilians
+simultaneously on field per wave, logged to `robotron/logs/yolo_waves.jsonl`).
+
+**The 17 unrescued civilians on a rich wave are NOT headroom.** The exact-state
+bot, with perfect information, also rescues 8 of 25. They are converted to progs
+by brains before any bot could reach them. Attempts to capture them:
+
+| variant | mechanism | exact-state late band |
+|---|---|---|
+| FSM_RESCUE_BRAIN | brain gets fire priority over grunts while civilians present | d/w 1.07 to 1.17, rescues 8.1 to 7.8, score -5%: WORSE |
+| (earlier) FSM_SPAWNER_FIRE / BRAIN_RESCUE_MULT | radius / priority tweaks | flat (proxy) |
+
+The rescue economy is at its cap and easily disturbed. The exact-state bot rides
+W100 on the current economy (late-band NET about +0.02, censored 16.6M). Adding
+economy is not the lever.
+
+## 5d. The perception diagnostic (2026-09-08) - detection is not the gap
+
+Vision detections vs memory truth, 74k late-band (W25-39) snapshot ticks from
+the death rings (`robotron/logs/deaths_yolo/*.json`, fields `mem` and `vis`):
+
+| on-field threats | recall |
+|---|---|
+| 5-9 | 89% |
+| 10-14 | 92% |
+| 15-19 | 91% |
+| 20-24 | 91% |
+| 25-29 | 91% |
+| 30+ | 90% |
+
+Recall is flat with density. Per class: Hulk 96, Grunt 95, Electrode 96, Tank 97,
+Prog 97, Quark 92, Enforcer 91, Brain 90, Sphereoid ~97 (an earlier "8%" was a
+spelling artifact - vision emits `Sphereoid`), TankShell 93, EnforcerBullet 87,
+CruiseMissile 78. The projectile figures are lower only because they move more
+than the 22 px match radius during the vision-age interval - that is the known
+latency, not a miss. False positives 4-6%, falling with density. Player
+position error median 0.6 px, p90 4.7 px. **The vision bot sees what the exact
+state sees.**
+
+## 5e. Bleed or luck? The Monte Carlo (2026-09-08)
+
+From the shipped bot's own 61-game per-wave record (arm `both`, lead 0.7):
+
+| | value |
+|---|---|
+| repeat band W20-39 deaths/wave | 1.23 |
+| W40+ deaths/wave | 1.40 |
+| income (score/25k) | ~1.10 lives/wave |
+| net in the repeat band | about -0.13 lives/wave |
+| bank of lives at W20 (median) | 4 |
+
+Empirical reach from W20: W40 19%, W50 3%, W60 0% (best W57, W60). Resampling
+waves from the record (an optimistic i.i.d. model; real deaths cluster):
+
+| condition | P(reach W100 from W20) | median bust |
+|---|---|---|
+| current bot | ~2% | W43 |
+| deaths/wave -0.10 | 13% | W53 |
+| deaths/wave -0.15 | 24% | W62 |
+| deaths/wave -0.20 | 37% | W77 |
+
+**W60 is where a strong early bank runs out at -0.13/wave, not luck.** W100 by
+luck is effectively zero. The nudge that would make W100 likely (-0.15 to
+-0.20 deaths/wave in the repeat band) is exactly the vision-vs-exact age gap
+(1.26 vs 1.07).
+
+## 5f. The exact-state harness - how to test a planner idea cheaply
+
+`ROBOTRON_ORACLE=1` runs the unchanged vision loop but replaces the detections
+with the emulator's exact memory entities (velocities from the same tracker).
+`=2` exact player only; `=3` exact entities only. `ROBOTRON_ORACLE_DELAY_MS`
+ages the exact state (with `_DELAY_TARGET=both|entities|player`). Cap games
+with `ROBOTRON_MAX_WAVE=40` so every game samples the repeat band; `ab_yolo.py
+run --arm name=ENV,ENV --band 25 40` interleaves arms and reports per-band
+deaths/wave, score/wave, rescues/wave with bootstrap CIs. 8 games/arm is about
+2 h and resolves roughly +/-0.1 deaths/wave in the late band; 16/arm for +/-0.07.
+
+Use it to measure a planner change with perception noise removed. If an idea
+does not beat base on exact state, it will not on vision. The bar: late-band
+deaths/wave clearly below base (1.02-1.07 in recent runs) with score not down.
+
+## 5g. Knob inventory - what exists, and its status
+
+The dev tree exposes about 110 environment knobs (`grep environ.get robotron/*.py`).
+Status as of 2026-09-08, so a reviewer does not re-propose closed items:
+
+**Shipped ON in production (defaults):** eye-sync 55 ms, hold-action 4,
+entity lead 0.7 (`--lag-ticks`), player lead 1.5, velocity EMA 0.5,
+VSEARCH_FIREPLAN, VSEARCH_ACT_LAG, VSEARCH_ASMDYN, VSEARCH_LEAST_BAD,
+FSM_BUFFER_SCALE 1.15, CLEAR_MARGIN 1.15, FSM_RESCUE_SEEK, the coaster
+(LOWCONF 0 / conf 0.30), FSM_ADJACENT_QUARK (evolved), HUNT (via the
+evolved `_hunt` json).
+
+**Tested and closed (see ledger section 5 for numbers):** 30 Hz loop; VSEARCH_H
+raised (never on vision); WALL_W; MAXCLR; CLEAR_DANGER 14; THREAT_FIELD;
+EDGE_DEFLECT; SPAWNER_FIRE / SPAWNER_ALL / SPAWNER_FIRE_R; BRAIN_RESCUE_MULT;
+RESCUE_BRAIN; KITE modes 1-3 and all KITE_* geometry; ALWAYS_FIRE;
+VSEARCH_STAY / LAB_STAY; VSEARCH_AGE_ADVANCE; VSEARCH_EXIT_W/MIN/STEPS;
+VSEARCH_SPARK_SLIDE; ROBOTRON_LAUNCH_LANE/R/SPD; ROBOTRON_YOLO_LAG_PROJ /
+LAB_LAG_PROJ; VSEARCH_W_SPARK, W_ENF, PROJ_W, STICKY (actuation-aware dodge
+family); ROBOTRON_TRACK_ALL (phantom timidity); ROBOTRON_PHANTOM_SOURCES
+(static blob, timid); ROBOTRON_FOVEA (catastrophic without crop-trained
+weights); ROBOTRON_ARENA_CROP (null despite +6 pt recall); TensorRT / WGC
+capture (age is upstream); evolved-constant ES at 48 and 288 games/candidate.
+
+**Exist, built with forensic rationale, A/B status NOT in this ledger - verify in
+git log / memory before proposing:** FSM_HULK_DEFLECT, FSM_HULK_PUSH,
+FSM_HULK_NOFIRE (hulk-pin was 30% of deaths in the July taxonomy),
+FSM_NO_SHOOT_SHELLS (tank shell budget), FSM_HUNT_STANDOFF value,
+ROBOTRON_COAST_FIT (line-fit velocity for straight projectiles),
+ROBOTRON_COAST_MS_TURN, ROBOTRON_TRACK_NOCOAST (the code's own open question:
+all-class tracking without coasting), ROBOTRON_AUTOCAL_APPLY.
+
+## 5h. Genuinely untried directions (honest list, with priors)
+
+Nothing below has been measured. Priors are my judgement from the record.
+
+1. **ROBOTRON_TRACK_NOCOAST** - all-class tracking that keeps the recall gain
+   of TRACK_ALL without coasting ghosts (the coasting caused the timidity).
+   Cheap to run on vision. Prior: low-moderate; recall is already 95%.
+2. **ROBOTRON_COAST_FIT** - line-fit velocities for sparks/shells to cut
+   differencing noise. Attacks the velocity-noise part of the residual. Prior:
+   low; the lead bracket's 0.5-0.9 plateau says the planner is insensitive to
+   extrapolation error of this size.
+3. **Per-detection age** - extrapolate each entity by the measured age of its
+   own frame instead of a global 0.7. Same plateau argument; prior low.
+4. **30 Hz decisions WITH eye-sync and the 9 ms TensorRT engine** - 30 Hz was
+   "dead" before eye-sync existed; untested in the current stack. Prior: low
+   (age, not cadence, is the cost), but cheap.
+5. **Re-evolve the FSM constants on VISION input at 576+ games/candidate** -
+   the evolver only ever ran on the proxy at 48/288 (random walk). Cost: days of
+   Xenia time per generation. Prior: moderate in principle, prohibitive in cost.
+6. **Hulk handling** (the three HULK_* knobs above) - hulk-pin was 30% of deaths
+   in July; status unclear. Prior: moderate if untested; verify first.
+7. **Tank-shell budget** (FSM_NO_SHOOT_SHELLS) - dodging shells forever
+   exhausts the wave's shell budget; shooting frees an aimed shot. Prior: low.
+8. **A learned policy** (RL or imitation on exact-state trajectories, which the
+   harness can generate at will) - the only architecture change left. Prior:
+   the one thing that could beat the exact-state bot's late band; weeks of work.
+9. **Hardware age** - on the console the capture card and display path set the
+   age (one rig: 40% duplicate frames). A lower-latency capture path is the
+   only lever that attacks the residual directly. Not testable from here.
+
+Closed-by-measurement list for reference: section 6 and the ledger section 5.
+Do not spend time on those without a new mechanism.
+
 ## 6. Where the ceiling is (settled 2026-09-08)
 
 Two investigations on 2026-09-08 closed the last two open levers by measurement.
@@ -241,7 +401,7 @@ exact state, loss early);
 evolved-constant search at 48 or 288 games/candidate; TensorRT and WGC
 capture (age is upstream); wave-start scripts; W24 memory poke.
 
-## 6b. Known quirk under test (found by fresh-context review, 2026-09-06)
+## 6b. Known quirk (found by fresh-context review, 2026-09-06) - RESOLVED, null
 
 All bots (production `brain.py`, dev `brain_champion.py`, `mame_lab.py`) map
 the FSM's STAY output to direction 1 = UP: the bot never stands still; every
