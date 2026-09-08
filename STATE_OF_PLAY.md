@@ -159,7 +159,40 @@ setting is robust to the console's slightly different lag. Production
 Closed the same day: real-STAY fix (+0.004), model-based threat advance
 (−0.026), capture path changes (no lag reduction).
 
-## 6. Open questions / next levers, ranked (revised 2026-09-07)
+## 6. Where the ceiling is (settled 2026-09-08)
+
+Two investigations on 2026-09-08 closed the last two open levers by measurement.
+
+**Planner economy is capped.** The late band is a rescue economy (~90% of
+score is rescue bonus; every late wave has civilians). The rich brain waves
+hold 25 civilians and the bot rescues 8 — but so does the EXACT-STATE bot
+with perfect information. The other 17 are converted by brains before any
+bot could reach them; they are not headroom. The exact-state bot already
+rides W100 at late-band NET ≈ +0.02 (censored 16.6M). Adding economy is not
+the lever; the brain-suppression variant (FSM_RESCUE_BRAIN) made deaths,
+rescues and score all worse.
+
+**Perception is not the gap.** Against memory truth over 74k late-band
+snapshots: recall 95%+ for every class, flat from 10 to 30+ threats on
+field, false positives 4-6%, player error median 0.6 px. The vision bot
+sees what the oracle sees.
+
+**The residual is unextrapolatable age.** Vision late-band deaths/wave
+(1.26) equals the exact-state-aged-one-tick-plus-lead-0.7 arm (1.33), not
+the fresh exact state (1.07). Lead 0.7 recovers the part of the age that
+velocity extrapolation can predict. It cannot recover events inside the
+aged interval — a projectile launched, an enemy re-aiming. Only reducing
+the age itself helps, and that is upstream in presentation and capture,
+where WGC and TensorRT showed no reduction.
+
+**Verdict:** the shipped configuration is at the achievable ceiling for
+this architecture at this latency: mean W31, median 30, half of games past
+W30, records W58/W60. Reliable W100 on the emulator needs either a planner
+that beats the oracle's capped +0.02 late band, or lower age from the
+hardware chain. On the console, age is a property of the capture card and
+display path; the bracketed lead (0.5-0.9 plateau) is the compensation.
+
+## 6a. Previous lever ranking (superseded)
 
 Where the late-band (W25-40) deaths/wave stands, from the exact-state harness:
 
