@@ -387,11 +387,18 @@ robotron_ai/
   coords.py       coordinate transforms (game <-> screen px <-> planner px)
   weights/        bundled YOLO detector (robotron.pt — yolo6) + HUD font (hud_font.npz)
   engine/         the proven, tuned libraries (readers, FSM, planner) — not rewritten
+  docs/           game internals (enemy model, Xenia memory, disassembly pointer) + archived research
+  WHAT_WE_TRIED.md  every idea tried so far and what happened (read before proposing changes)
+  STATE_OF_PLAY.md  engineering state: shipping config, experiment ledgers, open directions
 ```
 
 The `engine/` modules are the byte-for-byte MAME-parity readers, the evolved
 FSM, and the clearance planner. The orchestration layer wraps them; it never
 reimplements their logic.
+
+History and design notes: [WHAT_WE_TRIED.md](WHAT_WE_TRIED.md) (plain-English
+ledger of every change tried), [STATE_OF_PLAY.md](STATE_OF_PLAY.md) (the
+engineering version), and [docs/](docs/README.md) (game internals).
 
 ---
 
