@@ -242,6 +242,7 @@ class ThreadedVisionPerception:
         self._lock = threading.Lock()
         self._cond = threading.Condition()
         self._latest = None      # (t, Observation)
+        self.latest_t = None     # perf_counter when the newest sample landed
         self.seq = 0
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -264,6 +265,7 @@ class ThreadedVisionPerception:
                 continue
             with self._lock:
                 self._latest = (_t.perf_counter(), obs)
+                self.latest_t = self._latest[0]
             with self._cond:
                 self.seq += 1
                 self._cond.notify_all()

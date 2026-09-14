@@ -1,4 +1,4 @@
-# Robotron 2084 bot — state of play (updated 2026-09-10)
+# Robotron 2084 bot — state of play (updated 2026-09-14)
 
 A single-page orientation for anyone (or any fresh context) picking this up.
 Facts only; every number below comes from a logged run. The complete history of
@@ -6,6 +6,126 @@ every attempt since March 2026, written for non-engineers, is
 [WHAT_WE_TRIED.md](WHAT_WE_TRIED.md). This file is self-contained: it no longer
 depends on Claude's project-memory notes (their content is folded into the two
 docs; see section 8).
+
+## 0. 2026-09-14: the weekend screens, console round 14, and the console instrument
+
+**The weekend (GPT Astra, Sept 12-14, unattended Xenia).** Twelve isolated
+opt-in changes were screened at 8-12 games/arm on production Xenia, W25 cap,
+oracle-audited NET (timing normalisation, HUD-driven death/wave tracker resets,
+fresh-player, neutral-lead, player-bounds, unique velocity matching, static
+electrodes, closest-pair coasting, spark birth velocity, player command
+history, confirmed-only ghosts). None produced a confirmed gain. The strongest,
+confirmed-only projectile ghosts (a coasted track needs a second sighting
+before it is kept), read NET +0.186 CI [+0.031, +0.335] at 12/arm and
+**−0.026 CI [−0.185, +0.130] on an independent 9/arm replication**; not
+promoted. Two MAME screens (two-step turning paths, collision sub-steps) also
+lost. Full record: `WEEKEND_RESULTS.md`, `DAY_REPORT.md`, `NIGHT_REPORT.md`
+and `logs/weekend_20260912/` in the main checkout. **Note:** that work is
+uncommitted there (five modified source files with the opt-in knobs, plus
+`tests/`, `tools/` and ten markdown reports); nothing in it changes the
+shipping defaults.
+
+**Console round 14 (Eric, Sept 11, five games, current shipping config):**
+W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while
+the emulator went from a W13.5 mean to ~W30 with the same code. Per wave,
+with the same HUD bookkeeping on both rigs (HUD deaths undercount true deaths
+by ~12%; the emulator column is 135 weekend baseline games):
+
+| wave | emulator deaths/wave | console deaths/wave | emulator score/wave | console score/wave |
+|---|---|---|---|---|
+| 1 | 0.00 | 0.00 | 4.5k | 4.5k |
+| 2 | 0.04 | 0.20 | 7.4k | 5.3k |
+| 3 | 0.07 | 0.40 | 17.9k | 17.7k |
+| 4 | 0.25 | 0.60 | 17.6k | 19.2k |
+| 5 | 0.37 | 0.60 | 45.5k | 46.1k |
+| 6 | 0.59 | 0.60 | 22.1k | 23.3k |
+| 7 | 0.99 | 0.80 | 26.1k | 29.1k |
+| 8 | 0.76 | 1.60 | 22.2k | 21.7k |
+| **W1-9** | **0.50** | **0.73** | 21k | 21k |
+
+Same income, ~1.5x the HUD deaths (true deaths from lives bought: three of
+the five console games spent 10 lives by W9, ~1.1/wave, against ~0.6 on the
+emulator). The excess starts in waves 2-5, which the emulator barely dies in.
+
+What the summary report rules out (console vs the Sept 7 emulator
+hardware-sim): arena geometry (border at rows 95-630 / cols 267-1022 in both
+captures; the odd player-bounds figure is phantom detections on non-game
+screens), cadence (16.2 Hz eye-synced vs 15.0, planner rescaled x0.91),
+freshness (stale frames 4.7% vs 2.3%), player visibility (77% vs 81%), HUD
+coverage (91% vs 94%), the detector on his frames (clean boxes at the same
+confidences), and the emulator's game speed (player 147 px/s vs the 142
+calibrated, so Xenia is not running slow). Left unexplained: the console's
+command-to-response estimate reads a 1.0-tick median with a 3.0-tick p90,
+against a rock-stable 2.0 on the emulator, and the estimator is too coarse
+to say what that means. **Nothing the console has ever sent back can say
+what kills it.** Fourteen rounds of summaries cannot answer where the player
+was, what was next to it, whether the detector saw the killer, or how long a
+command takes to show on screen.
+
+**Shipped in this commit: the console instrument** (`trace.py`,
+`trace_report.py`, on by default in hardware mode, README "Decision trace and
+death windows"). Every decision tick is recorded (player, entities, coasted
+projectile tracks, command, blind/held, HUD state), and the 4.5 s of frames
+before each HUD death report plus 1 s after are saved as JPEGs — the
+collision is ~2.3 s before the report (the death-animation freeze, the blank,
+the re-form, then the icons update). `python -m robotron_ai.trace_report
+<folder>` turns a returned folder into the numbers below. The same tool run
+on 112 weekend baseline emulator games (838k ticks, 2,118 located deaths)
+gives the reference the console must be compared against:
+
+| trace_report metric | emulator reference |
+|---|---|
+| blind ticks | 19% |
+| player speed along a held axis command | 147 px/s x, 141 y (calibrated 142/138) |
+| 180-degree reversal shows on screen after | +2 ticks in 92% of reversals |
+| deaths within 50 px of a wall | 52% |
+| killer UNSEEN (nothing lethal within 45 px at the collision tick) | 18% |
+| killers | spark 31%, tank shell 14.5%, grunt 11%, cruise missile 10.5%, hulk 6%, spheroid 3%, electrode 1.5% |
+| median threats within 60 px at the collision | 1 |
+| HUD death report after the collision | 2.29 s median (p90 2.4) |
+| HUD deaths / lives the score bought | 0.88 |
+
+Round 15 is therefore: same shipping config, Eric plays five or more games,
+sends the folder back, and the first three lines of the report decide the
+direction — an UNSEEN share well above 18% is the detector on his capture
+chain (retrain on console frames); a reversal latency above +2 or a wide
+spread is actuation/age in the serial pad or the card (measure, then lead
+constants or hardware); a speed ratio off 1.0 is the controller or scale.
+Only then is a console-specific policy change worth a screen.
+
+**Eric's round-14 questions, against the ledger.**
+- *Endgame ordering (spawners before the last civilians; keep one grunt alive
+  until the family is collected):* not tested as such; it is a new, testable
+  idea. Neighbours: rescue-seek and the endgame hunt ship; spawners-first
+  lost six times; harder civilian pursuit lost three times; the late-band
+  rescue economy is at the exact-state cap (section 5c). Bounded upside, and
+  the console's losses are in waves 2-8, so it queues behind the diagnosis.
+- *Shooting toward the civilian it is walking to:* real. When nothing is in
+  fire range the FSM emits "no fire", and the brain maps that to the move
+  direction, so the bot fires along its heading. The nearest measured
+  alternative, fire at the nearest killable instead (ALWAYS_FIRE, section 5),
+  cut deaths/wave by 0.026 and score by 1.4%, NET +0.011: parked as too
+  small to ship on the emulator. Cheap to re-screen once the console's own
+  numbers exist.
+- *Boxes and collision geometry:* the planner uses box centres only, with
+  per-class weights (hulk 2.2, spark/tank shell 1.8, missile 1.6, enforcer
+  1.3, grunt 1.0, electrode 0.8) and a 21 px danger radius / 12 px margin on
+  vision; no per-object extents. Box height/width errors are cosmetic to it
+  as long as the centre is unbiased (≤1.2 px on the emulator). The wide
+  wave-10/20 electrodes are a genuine gap in a centre-only model; electrodes
+  are 1.5% of emulator deaths. The console trace will show its own share.
+- *Hulks:* a laser hit shoves a hulk (asm 471); never-fire-at-hulks lost
+  on MAME (−0.69 waves); the binding-threat fire plan shoots a hulk only
+  inside 90 px. Hulks are 6% of emulator deaths.
+- *Lower-delay capture / another language:* the Magewell Pro Capture is
+  already a low-latency PCIe card. The probe picked DirectShow MJPG for
+  unique-frame rate, not latency; MJPG adds an encode/decode step and
+  DirectShow buffering is invisible to the freshness metric, so a raw format
+  (YUY2/NV12) may be lower-latency. The trace's reversal-latency line
+  measures the whole loop directly, so round 15 says whether age is the
+  console's problem before anything is bought. A language change would not
+  help: the loop's own work is ~10 ms; the age lives in the console's output,
+  the card, and the detector.
 
 ## 1. Goal and constraint
 

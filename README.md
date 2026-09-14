@@ -100,11 +100,15 @@ python -m venv .venv
 | It's slow / stuttery | Close other heavy programs; a laptop without an NVIDIA GPU will struggle |
 
 **One more thing — send back the report.** While it plays, the bot writes a
-diagnostics folder at `robotron_ai\logs\hardware_report\` (a small
-`report.json` plus 2-3 screenshots). When you're done playing, **zip that
-folder and send it back** — it automatically answers all the calibration
-questions (control latency, capture quality, timing) so the next version can
-be tuned for your exact setup. You don't need to read or understand it.
+diagnostics folder at `robotron_ai\logs\hardware_report\`: a small
+`report.json`, a few screenshots, and (since round 15) a per-tick record of
+everything it saw and did plus the frames around every death. When you're
+done playing, **zip that folder and send it back** — it answers the
+calibration questions (control latency, capture quality, timing) and shows
+exactly what killed the bot each time, so the next version can be tuned for
+your exact setup. You don't need to read or understand it. The folder is a
+few hundred MB after five games (about 4 MB per death); if that is a
+problem, `--death-seconds 2` halves it and `--no-trace` turns it off.
 
 That's the whole thing. Everything below is detail for people who want to
 tinker.
@@ -209,6 +213,10 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--source {window,hdmi}` | mode preset | Frame source for `yolo` input |
 | `--device N` | `0` | HDMI capture device index/path |
 | `--probe-capture` | off | Measure every capture backend/format on `--device`, print the best flags, exit |
+| `--no-trace` | off | Hardware: don't write the per-tick decision trace and death-window frames (see below) |
+| `--trace-dir DIR` | `logs/hardware_report` | Hardware: where the trace goes |
+| `--death-seconds S` | `4.5` | Hardware: seconds of frames kept before each HUD death report (the collision is ~2-3 s before it) |
+| `--max-deaths N` | `60` | Hardware: stop saving death windows after N |
 | `--capture-backend {auto,msmf,dshow}` | `auto` | Capture API for the card |
 | `--capture-fourcc FMT` | card default | Pixel format to request (`MJPG`, `YUY2`) |
 | `--capture-fps N` | card default | Capture rate to request (e.g. `60`) |
@@ -255,6 +263,46 @@ override with the matching env var only if you're experimenting):
   can't, it rescales the planner's per-step kinematics to the real cadence
   instead of silently mispredicting (this is what makes slower hardware rigs
   behave correctly).
+
+### Decision trace and death windows (hardware, on by default)
+
+Fourteen hardware rounds sent back only `report.json` and a few screenshots.
+That fixed the scoreboard reader and the capture flags, but could not say
+why the console plays waves 9-12 while the emulator plays wave 30 with the
+same code (2026-09-14: at equal waves the console loses lives ~1.5-1.8x as
+fast, with identical score income, and none of the summary numbers differ).
+So the hardware loop now records, into the same `hardware_report` folder:
+
+- `decisions.jsonl` — one line per decision tick: timestamps, the player and
+  every entity in planner pixels, the projectile tracks the brain coasted,
+  the command sent, blind/held flags, and the scoreboard's view (score,
+  wave, lives, deaths, game id). Recording happens after the command is sent,
+  so it never delays actuation. Bounded at 256 MB.
+- `deaths/<game>_dNN_wWW/` — for each death the scoreboard reports, the
+  previous 4.5 s of frames plus 1 s after, as JPEGs with an index
+  (`index.jsonl`: per-frame time, player, command, HUD state) and
+  `event.json`. The collision itself is ~2-3 s before the HUD report (the
+  scene freezes for the death animation, blanks, re-forms, then the lives
+  icons update), which is why the window is that long. ~190 MB of RAM for
+  the ring, ~4 MB of disk per death, at most `--max-deaths` windows.
+- `trace_summary.json` — counts, bytes, and any recording error.
+
+Analyse a returned folder with:
+
+```
+.venv\Scripts\python -m robotron_ai.trace_report robotron_ai\logs\hardware_report
+```
+
+It prints loop cadence and blind/held fractions; the player's speed along
+held axis commands against the calibrated 142 px/s (a slow game, weak
+stick, or wrong arena scale all show here); how many ticks a 180-degree
+move reversal takes to show on screen; per-game and per-wave deaths and
+score with the lives the score bought (so the HUD's miss rate is visible);
+and for every death the collision tick, the nearest lethal entity and its
+distance (or UNSEEN when nothing lethal was within 45 px), wall distance,
+coasting ghost tracks, and the commands sent just before. The same tool
+reads the emulator's production game folders, so the emulator's numbers are
+the reference (STATE_OF_PLAY.md section 0 has them).
 
 ### Capture card tuning (`--probe-capture`)
 

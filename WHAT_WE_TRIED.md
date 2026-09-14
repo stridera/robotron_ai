@@ -1,7 +1,7 @@
 # What we already tried: the Robotron bot idea ledger
 
 **For:** anyone with an idea for making the bot play deeper.
-**Covers:** March to September 2026. **Current as of:** 2026-09-10.
+**Covers:** March to September 2026. **Current as of:** 2026-09-14.
 **Engineering version:** [STATE_OF_PLAY.md](STATE_OF_PLAY.md).
 
 This is every change we've tried on the bot since March 2026, what happened when
@@ -1250,6 +1250,7 @@ accident.
 
 | Direction | Why it might work | Chances |
 |---|---|---|
+| **Find out what actually kills the bot on the console** (round 15, instrumented) | On Eric's console the bot has sat at waves 9-12 through rounds 12-14 while the emulator went from 13 to 30 with the same code. At equal waves it earns the same score but loses lives ~1.5x as fast, starting in waves 2-5. None of the summary numbers we get back (timing, capture freshness, geometry, scoreboard) differ, and no console run has ever recorded what was next to the player when it died. Round 15 records every decision and the frames around each death; the analysis compares the console to the emulator's own death profile (52% at a wall, 18% killer not visible, sparks 31%). The GPT Astra weekend screens (Sept 12-14, twelve emulator changes) found nothing, which makes this the open question. | **High that it tells us where to look; only Eric can run it** |
 | **Lower-delay capture on the console** | Goes straight at the remaining problem. One rig showed 40% duplicate frames. Only Eric can test this. | **Moderate, and cheap to try** |
 | **Re-run the wall-repulsion and open-space tests on the fixed farm** | The only direct September tests ran on a farm build with rescue-seeking off. About an hour of farm time. | Low (every related test lost), but cheap |
 | **An exact game model + look-ahead over whole move sequences** | Planned on MAME in July; the data plumbing was built, the model never was. It's the one planner idea aimed at beating the perfect-information bot's late waves. | Low to moderate; weeks of work |

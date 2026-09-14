@@ -509,9 +509,15 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                      loop_games: bool = False, telemetry=None,
                      menu_start: bool = False, visualize_plain: bool = False,
                      auto_lead: bool = False, games_limit: int = 0,
-                     eye_sync_ms: float = 0.0, hold_action: int = 0):
+                     eye_sync_ms: float = 0.0, hold_action: int = 0,
+                     trace=None):
     """Minimal loop for real hardware. Runs until interrupted (Ctrl+C). Plans and
     acts whenever the player is visible; goes neutral when it isn't.
+
+    `trace` (trace.HardwareTrace, optional): per-tick decision records and
+    death-window frames, fed AFTER the command is sent so recording never
+    delays actuation. It reads the bookkeeper's deaths/game-over flags to
+    know when to save a window.
 
     Game state comes from HUD OCR when a font is available (hud_reader +
     bookkeeper): score/wave/lives are read off the video feed each tick, giving
@@ -633,6 +639,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                     # 29,000 ms OVERRUN.
                     clock.next = None
             cur_mv = cur_fr = 0
+            held = False
             if obs.player is None:
                 blind += 1
                 if obs.entities:
@@ -642,6 +649,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                     # instead of snapping to a standstill.
                     controller.move_shoot(*last_cmd)
                     cur_mv, cur_fr = last_cmd
+                    held = True
                 else:
                     controller.neutral()
             else:
@@ -655,6 +663,11 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             if telemetry is not None:
                 telemetry.tick(cur_mv, obs.player,
                                getattr(perception, "last_boxes", None), frame)
+            if trace is not None:
+                trace.tick(frame=frame, obs=obs, move=cur_mv, fire=cur_fr,
+                           blind=blind, held=held, bookkeeper=bookkeeper,
+                           sampled_at=getattr(perception, "latest_t", None),
+                           seq=getattr(perception, "seq", None), brain=brain)
             if visualizer is not None and visualizer.enabled:
                 _render_vision(visualizer, perception, cur_mv, cur_fr, blind,
                                plain=visualize_plain)
@@ -674,6 +687,17 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                 clock.wait()
     finally:
         # Ctrl+C included: the friend's report must survive any exit.
+        if trace is not None:
+            try:
+                s = trace.close()
+                d = s.get('decisions') or {}
+                r = s.get('deaths') or {}
+                print(f"[trace] {d.get('written', 0)} decision ticks, "
+                      f"{r.get('events', 0)} death windows "
+                      f"({r.get('written_frames', 0)} frames) written",
+                      flush=True)
+            except Exception as e:      # noqa: BLE001 — never mask the report
+                print(f"[trace] close failed: {e}", flush=True)
         if telemetry is not None:
             src = getattr(perception, 'source', None)
             cap_stats = src.stats() if hasattr(src, 'stats') else None

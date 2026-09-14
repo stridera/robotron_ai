@@ -161,6 +161,20 @@ def build_parser() -> argparse.ArgumentParser:
                      help="hardware: per-wave JSONL path for HUD bookkeeping "
                           "(default: robotron_ai/logs/hud_waves.jsonl; "
                           "analysable with robotron/ab_yolo.py --log)")
+    run.add_argument("--no-trace", action="store_true",
+                     help="hardware: disable the per-tick decision trace and "
+                          "death-window frames (on by default; written into "
+                          "the hardware_report folder — see README)")
+    run.add_argument("--trace-dir", default=None,
+                     help="hardware: where the trace goes (default: the "
+                          "hardware_report folder, so one zip carries everything)")
+    run.add_argument("--death-seconds", type=float, default=4.5, metavar="S",
+                     help="hardware trace: seconds of frames kept before each "
+                          "HUD death report (default 4.5: the collision is "
+                          "~2-3 s before the report; ~40 MB of RAM per second)")
+    run.add_argument("--max-deaths", type=int, default=60,
+                     help="hardware trace: stop saving death windows after N "
+                          "(default 60, ~3-4 MB each)")
     return p
 
 
@@ -352,6 +366,21 @@ def main(argv=None) -> None:
                 else:
                     print("[cli] no HUD font (weights/hud_font.npz) — "
                           "running without score/wave bookkeeping")
+            # Per-tick trace + death windows (2026-09-14): the console has
+            # only ever sent back summaries, and the summaries do not
+            # explain its W9-12 ceiling. Default ON; lives in the same
+            # folder the operator already zips up.
+            trace = None
+            if not cfg.no_trace:
+                from .trace import HardwareTrace
+                trace_dir = cfg.trace_dir or telemetry.out
+                trace = HardwareTrace(trace_dir, hz=cfg.hz,
+                                      death_before_s=cfg.death_seconds,
+                                      max_deaths=cfg.max_deaths,
+                                      deaths=(bookkeeper is not None))
+                print(f"[cli] decision trace + death windows -> {trace_dir}"
+                      + ("" if bookkeeper is not None else
+                         " (no HUD bookkeeping: decisions only)"))
             harness.play_vision_game(brain, perception, controller,
                                      hz=cfg.hz, start_seq=cfg.start, debug=cfg.debug,
                                      visualizer=visualizer,
@@ -362,7 +391,8 @@ def main(argv=None) -> None:
                                      auto_lead=cfg.auto_lead,
                                      games_limit=cfg.games,
                                      eye_sync_ms=cfg.eye_sync,
-                                     hold_action=cfg.hold_action)
+                                     hold_action=cfg.hold_action,
+                                     trace=trace)
         else:
             # Xenia: memory bookkeeping harness (works for memory OR vision input).
             from .engine.game_state import GameStateReader
