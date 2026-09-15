@@ -151,3 +151,18 @@ real-vision claim: Xenia stages A and B are still pending the unlocked desktop.
 Plateau from ~400 px: 100 → +0.204, 160 → +0.311, 250 → +0.342, 400 → +0.379,
 unlimited → +0.370 (the last three overlap). The second shot is free at any
 range, so the production default should be 400 px when the knob is promoted.
+
+### Stage A interim — Xenia exact state, W25-40 (2026-09-15 01:30, 4 games/arm of 8, interleaved, W40 cap)
+
+| arm | deaths/wave W25-40 | game-bootstrap 95% CI | score/wave | rescues/wave | games reaching W40 |
+|---|---:|---|---:|---:|---|
+| base | 1.200 | [1.146, 1.250] | 28,531 | 8.23 | 3 / 4 (one game over at W33) |
+| fire_alt (R=160) | 0.766 | [0.656, 0.891] | 28,914 | 8.23 | 4 / 4 |
+
+Per game, late-band deaths/wave: base 1.11, 1.19, 1.25, 1.25; fire_alt 0.75,
+0.62, 0.94, 0.75. Delta +0.43 deaths/wave (p < 0.001 on the harness's game
+bootstrap); income and rescues unchanged. The XBLA port runs the arcade fire
+task unchanged, and the effect in the repeat band is twice the −0.15 to −0.20
+the 2026-09-08 Monte Carlo said makes W100 likely. (A first attempt at 23:19
+was discarded: a custom wave-log path hid the W40 cap from the harness's
+emulator-restart check, so games 2-6 attached to a finished game and quit.)
