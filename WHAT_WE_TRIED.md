@@ -34,6 +34,7 @@ measured every one of them, most of them more than once.
 
 | The idea | What happened | |
 |---|---|---|
+| "Shoot faster" | ✅ **Yes, and it was the breakthrough (Sep 2026).** The game only fires every 8 frames while you hold the stick, but 2 frames after every *change*. Alternating between two targets each tick doubles the shots. Deaths per wave fell ~30% at every test stage and the video bot went from a W60 record to **W117**. | [details](#fire-alternation) |
 | "Circle the field / keep moving in a loop" | ❌ Tried **5 separate times** since March. All worse or no effect. | [details](#circle-the-field-kiting) |
 | "Shoot the spawners first" | ❌ Tried **6 times**. It always cost score and never cut deaths. | [details](#shoot-spawners-first) |
 | "Just shoot constantly" | 🅿️ Slightly fewer deaths, slightly less score. A wash. | [details](#always-be-shooting) |
@@ -66,6 +67,7 @@ earlier version, so it helps to know the eras.
 | Jul 2026 | Same bot on the Xbox game, reading the game's memory | **W158** | Showed delay was the gap. Memory reading isn't possible on a real console. |
 | Jul 2026 | Same bot on **video only** (the version Eric runs) | mean ≈ 13.5, best W26 | Detection solved. Stuck at a plateau. |
 | Late Jul–Aug | Video bot rework + hardware rounds 1–12 with Eric | first life-positive video bot; scoreboard reading correct on Eric's rig | |
+| Sep 14–15 2026 | **Fire alternation**: switch the fire stick between two targets every tick, because the game fires 2 frames after a change and only every 8 while held | **W117 and W90 on video** (previous record W60); deaths per wave down 25–35% at every stage of a one-night confirmation ladder | Found in the game's own code, not by tuning. Shipped on by default. |
 | Sep 2026 | Delay work: fresher frames and aiming ahead | **mean ≈ 31, records W58 / W60** | The ceiling for this design at this delay ([§5](#5-four-things-we-measured-that-constrain-every-new-idea)) |
 
 **There are three versions of the same bot, and the difference matters:**
@@ -1208,6 +1210,32 @@ played, and each game's end is reported only once.
 
 ---
 
+<a id="fire-alternation"></a>
+<details>
+<summary>✅ <b>Fire alternation</b> (Sep 14–15 2026): switch the fire stick between two targets every tick</summary>
+
+**Where it came from:** the game's own fire routine. It counts frames since the
+fire direction last changed, fires when the count reaches 2, then every 8
+frames while the direction is held, and any change resets the count. Our bot
+decides every 4 frames, so alternating between two live targets fires every 4
+frames instead of every 8, and the main target still gets a shot every 8.
+
+**What happened:** on the emulator-proxy farm deaths per wave fell from 1.13 to
+0.84 (NET +0.31), confirmed on 576 fresh games per side (+0.31, interval +0.29
+to +0.33). On the real Xbox code with perfect information, W25–40 deaths per
+wave fell from 1.22 to 0.76. On real video with the shipping setup, 12 games a
+side: W5–25 1.06 → 0.81, W25–40 1.33 → 1.10, ten of twelve games reached the
+W40 cap against one of twelve. Uncapped video games then reached **W117** and
+**W90** against baseline games ending at 31, 16 and 31. Score per wave was
+unchanged or slightly up throughout; rescues unchanged.
+
+**Why it works when so much else didn't:** it doesn't ask the bot to see
+better, react sooner or position differently. It removes a self-imposed cap
+on how fast it kills, and killing faster is what thins the swarm before the
+swarm boxes it in. Shipped on by default for video (400 px second-target
+radius). Full numbers: `docs/FIRE_ALT_EXPERIMENT.md`.
+</details>
+
 ## 5. Four things we measured that constrain every new idea
 
 **1. The bot can't earn more points.** After wave 20, about 90% of score is rescue
@@ -1250,7 +1278,6 @@ accident.
 
 | Direction | Why it might work | Chances |
 |---|---|---|
-| **Fire alternation** (2026-09-14): the game fires a laser 2 frames after you change the fire direction and only every 8 frames while you hold it, so switching between two targets every tick doubles the shots | Found in the game's own code. On the emulator-proxy farm it cut deaths per wave from 1.10 to 0.83 with score up, confirmed on 576 fresh games per side (NET +0.31, interval +0.29 to +0.33) — the first idea in this ledger to survive full confirmation. Real-Xbox-code (Xenia) tests are next; not shipped yet. | **High; the largest measured effect in the project** |
 | **Find out what actually kills the bot on the console** (round 15, instrumented) | On Eric's console the bot has sat at waves 9-12 through rounds 12-14 while the emulator went from 13 to 30 with the same code. At equal waves it earns the same score but loses lives ~1.5x as fast, starting in waves 2-5. None of the summary numbers we get back (timing, capture freshness, geometry, scoreboard) differ, and no console run has ever recorded what was next to the player when it died. Round 15 records every decision and the frames around each death; the analysis compares the console to the emulator's own death profile (52% at a wall, 18% killer not visible, sparks 31%). The GPT Astra weekend screens (Sept 12-14, twelve emulator changes) found nothing, which makes this the open question. | **High that it tells us where to look; only Eric can run it** |
 | **Lower-delay capture on the console** | Goes straight at the remaining problem. One rig showed 40% duplicate frames. Only Eric can test this. | **Moderate, and cheap to try** |
 | **Re-run the wall-repulsion and open-space tests on the fixed farm** | The only direct September tests ran on a farm build with rescue-seeking off. About an hour of farm time. | Low (every related test lost), but cheap |

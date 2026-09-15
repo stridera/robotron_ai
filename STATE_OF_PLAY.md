@@ -7,30 +7,58 @@ every attempt since March 2026, written for non-engineers, is
 depends on Claude's project-memory notes (their content is folded into the two
 docs; see section 8).
 
-## 0a. 2026-09-14 evening: fire alternation — the first proxy result that survives confirmation
+## 0a. 2026-09-14/15: fire alternation — wave 117 on real vision
 
-The ROM's fire task (robomame.asm `$31B9`-`$3235`) fires a laser 2 frames
-after the fire direction is set or changed and every 8 frames while it is
-held; a change clears the count. At our 4-frame tick, alternating between two
-live targets every tick fires every 4 frames: double laser throughput with no
-loss toward the primary target. Implemented as opt-in `VSEARCH_FIRE_ALT=1`
-(dev and production planners; `--fire-alt` on the CLI), default off.
+**The mechanism (from the ROM).** Robotron's fire task (robomame.asm
+`$31B9`-`$3235`) fires a laser 2 frames after the fire direction is set or
+changed and every 8 frames while it is held; a change clears the count. At our
+4-frame decision tick, alternating between two live targets every tick fires
+every 4 frames: double laser throughput, with the primary target still hit
+every 8 frames. The XBLA game runs the same 6809 bytes, so it transfers.
+Implemented as `VSEARCH_FIRE_ALT` in both planners; **default ON for the
+vision path since 2026-09-15 (radius 400 px)**, off for memory input,
+`--fire-alt` / `--no-fire-alt` on the CLI, env pin wins for A/B purity.
 
-| stage | games/arm | deaths/wave base -> candidate | NET delta (95% CI) |
+**The confirmation ladder, all in one night** (full record with per-game
+numbers in [docs/FIRE_ALT_EXPERIMENT.md](docs/FIRE_ALT_EXPERIMENT.md)):
+
+| stage | games/arm | deaths/wave base -> fire_alt | delta (95% CI) |
 |---|---:|---|---|
-| proxy screen (cal_d10, LAB_LAG 0.3) | ~131 | 1.127 -> 0.844 | +0.309 [+0.266, +0.353] |
-| proxy confirmation, fresh seeds, fresh process, LAB_LAG 0.7 | 576 | 1.097 -> 0.828 | **+0.311 [+0.289, +0.333]** |
-| radius 100 / 250 px (144/arm each) | 144 | 1.081 -> 0.911 / 1.091 -> 0.787 | +0.204 / +0.342 |
+| MAME proxy screen (cal_d10) | ~131 | 1.127 -> 0.844 | NET +0.309 [+0.266, +0.353] |
+| MAME fresh-seed, fresh-process confirmation (LAB_LAG 0.7) | 576 | 1.097 -> 0.828 | NET +0.311 [+0.289, +0.333] |
+| radius sweep 100 / 160 / 250 / 400 / unlimited | 144 | — | NET +0.20 / +0.31 / +0.34 / +0.38 / +0.37 |
+| Xenia exact state, W25-40, W40 cap | 8 | 1.217 -> 0.758 | +0.46, p < 0.001 |
+| Xenia exact state, W5-25 | 8 | 0.780 -> 0.429 | +0.35, p < 0.001 |
+| **Xenia real vision, shipping config, W5-25** | 12 | 1.063 -> 0.806 | +0.257 [+0.132, +0.387] |
+| **Xenia real vision, W25-40** | 12 | 1.328 -> 1.104 | +0.225 [+0.094, +0.396] |
+| Xenia real vision, uncapped, R=400 | 3 | max wave 31 / 16 / 31 vs **117 / 90** / (third pending) | — |
 
-The effect is present in every wave band and largest in W20-25 (1.43 -> 1.05);
-rescues per wave are unchanged, so it is faster killing. Every other arm in
-the same queue lost (discounted 10-step horizon −0.137, act-lag + age-advance
-−0.109, and the re-screens of max-clearance −0.154 and wall repulsion −0.208,
-which close the section-5 caveat). The XBLA game runs the same 6809 bytes, so
-the mechanism should transfer; the Xenia exact-state W25-40 and real-vision
-A/Bs (`robotron/xenia_night_20260914.ps1`) are pending an unlocked desktop
-session. Full record: [docs/FIRE_ALT_EXPERIMENT.md](docs/FIRE_ALT_EXPERIMENT.md).
-Not promoted until Xenia confirms.
+Income and rescues per wave are unchanged at every stage; the gain is faster
+killing. In the real-vision 12/arm run ten of twelve fire_alt games reached the
+W40 cap against one of twelve baseline games. Uncapped, the W117 game scored
+3.14M with 114 deaths and ran ~1.12 deaths/wave above W40 against ~1.1 lives
+bought per wave: break-even, the regime the memory-input champion rides to
+W100-158. The vision bot's previous record was W60.
+
+Everything else screened in the same queue lost: discounted 10-step horizon
+−0.137, act-lag + age-advance −0.109, and the re-screens of max-clearance
+−0.154 and wall repulsion −0.208 on the corrected proxy (closing the
+section-5 caveat).
+
+**What this changes in the picture.** Section 6's verdict ("at the ceiling
+for this architecture at this latency") assumed the laser rate was fixed. It
+was not: the bot had been throwing away half its shots by holding the stick.
+The age analysis still stands, but the late band is no longer a bleed. Next:
+more uncapped real-vision games for a depth distribution, the console
+(round 15 ships with this on), and a 30 Hz fire-stick dither in the
+controller layer (a change every 2 frames would fire at the ROM's minimum
+interval; the 4-laser cap will bind sooner, so it needs its own screen).
+
+**Operational gotchas from the night:** the Xenia focus guard aborts on a
+locked desktop; PowerShell 5.1's `Get-Date -UFormat %s` is seven hours early
+(never use it for `--since`); a custom `ROBOTRON_WAVE_LOG` hides the W40 cap
+from `ab_yolo`'s emulator-restart check; MAME `.venv` is a dead symlink, use
+`.venv-collision`.
 
 ## 0. 2026-09-14: the weekend screens, console round 14, and the console instrument
 
