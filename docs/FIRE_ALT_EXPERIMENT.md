@@ -70,3 +70,16 @@ anyone believes it.
    depth runs, then round-15 console.
 
 Results are appended below as they arrive.
+
+### Stage 1 companions (same queue, same calibration, 20:22)
+
+| arm | games | deaths/wave | score/wave | NET delta vs base (95% CI) |
+|---|---:|---:|---:|---|
+| disc10 (VSEARCH_H=10, VSEARCH_DISCOUNT=0.15) | 144 | 1.202 | 26,343 | −0.137 [−0.180, −0.098] |
+| mpc (VSEARCH_ACT_LAG=1 + VSEARCH_AGE_ADVANCE=1.0) | 135 | 1.208 | 27,183 | −0.109 [−0.150, −0.068] |
+| maxclr (VSEARCH_MAXCLR=1, re-screen with RESCUE_SEEK on) | 137 | 1.076 | 22,750 | −0.154 [−0.189, −0.119] |
+| wallw03 (VSEARCH_WALL_W=0.3, re-screen with RESCUE_SEEK on) | 130 | 1.088 | 21,707 | −0.208 [−0.246, −0.170] |
+
+All four closed. The two re-screens settle the STATE_OF_PLAY caveat that
+WALL_W / MAXCLR had only been measured on the proxy build without rescue
+seeking: they lose on the corrected build too.
