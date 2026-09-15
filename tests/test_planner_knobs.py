@@ -28,7 +28,12 @@ def _scenes(n=200, seed=3):
 
 class FireAltTest(unittest.TestCase):
     def setUp(self):
+        # the brain wiring test flips the planner's globals (fire plan,
+        # vision margins); pin the champion defaults here so the sequences
+        # below are about alternation only
         cp.set_fire_alt(False)
+        cp.set_fireplan(False)
+        cp.set_margins(18, 10)
 
     def tearDown(self):
         cp.set_fire_alt(False)
@@ -61,6 +66,28 @@ class FireAltTest(unittest.TestCase):
         sp = [(300, 250, "Player", 0, 0), (360, 250, "Grunt", 0, 0), (300, 190, "Grunt", 0, 0)]
         self.assertEqual(cp.clearance_search(sp, 1, 0)[1], 0)
         self.assertEqual(cp.clearance_search(sp, 1, 0)[1], 0)
+
+
+class BrainWiringTest(unittest.TestCase):
+    def tearDown(self):
+        cp.set_fire_alt(False)
+        cp.set_fireplan(False)
+        cp.set_margins(18, 10)
+
+    def test_brain_flag_enables_alternation(self):
+        from .. import brain as brain_mod
+        b = brain_mod.ChampionBrain(lag_ticks=0.7, use_coaster=True, fire_alt=True)
+        self.assertTrue(cp.FIRE_ALT)
+        ents = [(360.0, 250.0, "Grunt"), (300.0, 190.0, "Grunt")]
+        fires = [b.decide((300.0, 250.0), ents)[1] for _ in range(4)]
+        self.assertEqual(len(set(fires)), 2)          # alternates between the two targets
+        self.assertEqual(fires[0], fires[2])
+
+    def test_brain_default_leaves_planner_alone(self):
+        from .. import brain as brain_mod
+        cp.set_fire_alt(False)
+        brain_mod.ChampionBrain(lag_ticks=0.7, use_coaster=True)
+        self.assertFalse(cp.FIRE_ALT)
 
 
 class DiscountTest(unittest.TestCase):

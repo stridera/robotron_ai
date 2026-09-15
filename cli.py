@@ -125,6 +125,14 @@ def build_parser() -> argparse.ArgumentParser:
     brn.add_argument("--player-lead", type=float, default=None,
                      help="player forward-prediction ticks "
                           "(default: 0.45 memory / 1.5 vision)")
+    brn.add_argument("--fire-alt", dest="fire_alt", action="store_true", default=None,
+                     help="fire-direction alternation: when the fire direction "
+                          "would repeat and a second killable target is in range, "
+                          "fire at it this tick (ROM fires 2 frames after a change "
+                          "vs every 8 held: ~2x laser throughput; proxy NET +0.31, "
+                          "2026-09-14). Default off until Xenia confirms")
+    brn.add_argument("--no-fire-alt", dest="fire_alt", action="store_false",
+                     help="force fire alternation off")
     brn.add_argument("--vel-ema", type=float, default=0.5,
                      help="velocity EMA alpha (1.0 = raw, lower = smoother)")
     brn.add_argument("--no-frame-sync", action="store_true",
@@ -308,7 +316,7 @@ def main(argv=None) -> None:
         lag_ticks=cfg.lag_ticks, player_lead_ticks=cfg.player_lead,
         vel_ema_alpha=cfg.vel_ema,
         use_coaster=(cfg.input == "yolo"),   # vision only; memory is exact
-        debug=cfg.debug)
+        debug=cfg.debug, fire_alt=cfg.fire_alt)
     controller = _build_controller(cfg)
 
     from .visualize import Visualizer

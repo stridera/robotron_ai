@@ -20,6 +20,7 @@ import os
 _USER_PINNED_MARGINS = ("VSEARCH_CLEAR_DANGER" in os.environ
                         or "VSEARCH_CLEAR_MARGIN" in os.environ)
 _USER_PINNED_FIREPLAN = "VSEARCH_FIREPLAN" in os.environ
+_USER_PINNED_FIRE_ALT = "VSEARCH_FIRE_ALT" in os.environ
 
 # The planner reads these at import time, so seed the champion defaults BEFORE
 # importing the engine modules. setdefault => real env vars still win (for A/B).
@@ -31,7 +32,7 @@ os.environ.setdefault("FSM_RESCUE_SEEK", "1")
 
 from .engine import robotron_fsm as fsm                       # noqa: E402
 from .engine.clearance_planner import (clearance_search, DXY,  # noqa: E402
-                                       set_margins, set_fireplan)
+                                       set_margins, set_fireplan, set_fire_alt)
 # Vision-path planner margins (2026-07-08 dose-response A/B): ~1.15x the
 # memory-optimal 18/10 absorbs vision tracking noise (mean 14.4 vs 13.6,
 # worst-game floor W10 vs W7); 1.3x regressed. Memory path keeps 18/10.
@@ -217,7 +218,7 @@ class ChampionBrain:
 
     def __init__(self, lag_ticks: float, player_lead_ticks: float = DEFAULT_PLAYER_LEAD,
                  vel_ema_alpha: float = 0.5, use_coaster: bool = False,
-                 debug: bool = False):
+                 debug: bool = False, fire_alt=None):
         self.lag_ticks = lag_ticks
         self.player_lead_ticks = player_lead_ticks
         self.vt = VelocityTracker(alpha=vel_ema_alpha)
@@ -232,6 +233,11 @@ class ChampionBrain:
         # VSEARCH_FIREPLAN always wins, for A/B.
         if use_coaster and not _USER_PINNED_FIREPLAN:
             set_fireplan(True)
+        # Fire-direction alternation (2026-09-14, docs/FIRE_ALT_EXPERIMENT.md):
+        # explicit argument wins, then an env-pinned VSEARCH_FIRE_ALT, else
+        # the planner default (off until the Xenia stages confirm).
+        if fire_alt is not None and not _USER_PINNED_FIRE_ALT:
+            set_fire_alt(bool(fire_alt))
         self.last_mv = 0
         self._setup_fsm(debug)
 
