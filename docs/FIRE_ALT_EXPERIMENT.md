@@ -166,3 +166,18 @@ task unchanged, and the effect in the repeat band is twice the −0.15 to −0.2
 the 2026-09-08 Monte Carlo said makes W100 likely. (A first attempt at 23:19
 was discarded: a custom wave-log path hid the W40 cap from the harness's
 emulator-restart check, so games 2-6 attached to a finished game and quit.)
+
+### Stage A final — Xenia exact state (2026-09-15 03:28, 8 games/arm, interleaved, W40 cap)
+
+| band | base deaths/wave (95% CI) | fire_alt deaths/wave (95% CI) | delta | score/wave base / fire_alt |
+|---|---|---|---|---|
+| W25-40 | 1.217 [1.139, 1.289] | 0.758 [0.672, 0.852] | +0.46, p < 0.001 | 29,074 / 29,497 |
+| W5-25 | 0.780 [0.685, 0.863] | 0.429 [0.369, 0.494] | +0.35, p < 0.001 | 29,811 / 30,234 |
+
+Per game: base max wave [33, 40 x7], deaths [28, 33, 30, 36, 33, 37, 34, 36];
+fire_alt max wave [40 x8], deaths [22, 20, 25, 20, 18, 23, 22, 15]. Rescues
+per wave 8.27 vs 8.18. The perfect-information planner's late band goes from
+~1.2 to ~0.76 deaths/wave with the same income: the mechanism transfers to the
+Xbox game code, and the late-band effect is roughly twice what the Monte Carlo
+says makes W100 likely. Stage B (real vision, 12/arm, W40 cap) started 03:28;
+stage C (uncapped vision depth, R=400) is chained behind it.
