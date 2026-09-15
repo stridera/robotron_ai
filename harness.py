@@ -664,10 +664,21 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                 telemetry.tick(cur_mv, obs.player,
                                getattr(perception, "last_boxes", None), frame)
             if trace is not None:
-                trace.tick(frame=frame, obs=obs, move=cur_mv, fire=cur_fr,
-                           blind=blind, held=held, bookkeeper=bookkeeper,
-                           sampled_at=getattr(perception, "latest_t", None),
-                           seq=getattr(perception, "seq", None), brain=brain)
+                try:
+                    trace.tick(frame=frame, obs=obs, move=cur_mv, fire=cur_fr,
+                               blind=blind, held=held, bookkeeper=bookkeeper,
+                               sampled_at=getattr(perception, "latest_t", None),
+                               seq=getattr(perception, "seq", None), brain=brain)
+                except Exception as e:      # noqa: BLE001 — a recorder bug must
+                    trace_errors = getattr(play_vision_game, '_trace_errors', 0) + 1
+                    play_vision_game._trace_errors = trace_errors
+                    if trace_errors <= 3:   # never end a console run
+                        print(f"[trace] tick error (recording continues): {e}",
+                              flush=True)
+                    if trace_errors == 50:
+                        print("[trace] too many errors — trace disabled for "
+                              "this run", flush=True)
+                        trace = None
             if visualizer is not None and visualizer.enabled:
                 _render_vision(visualizer, perception, cur_mv, cur_fr, blind,
                                plain=visualize_plain)
