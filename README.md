@@ -83,9 +83,9 @@ python -m venv .venv
 - The first start takes ~30-60 seconds (the vision model warms up). Then the
   player will start dodging, shooting, and rescuing the family on its own,
   15 decisions per second.
-- It plays *well* — typically somewhere in **waves 15-25**, sometimes much
-  deeper (its record is wave 55). It will still die eventually; that's
-  Robotron.
+- It plays *well*. On the emulator it now typically reaches **wave 40+** and
+  its record is **wave 117** (2026-09-15, after the fire-alternation change
+  below). It will still die eventually; that's Robotron.
 - Want to watch what it's "seeing"? Add `--visualize` to the command — a
   window opens showing every enemy it detects and the direction it chose.
 - To stop it: click the black window and press **Ctrl+C**.
@@ -213,6 +213,7 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--source {window,hdmi}` | mode preset | Frame source for `yolo` input |
 | `--device N` | `0` | HDMI capture device index/path |
 | `--probe-capture` | off | Measure every capture backend/format on `--device`, print the best flags, exit |
+| `--fire-alt` / `--no-fire-alt` | on for vision | Fire-direction alternation (see below); on by default for vision since 2026-09-15 |
 | `--no-trace` | off | Hardware: don't write the per-tick decision trace and death-window frames (see below) |
 | `--trace-dir DIR` | `logs/hardware_report` | Hardware: where the trace goes |
 | `--death-seconds S` | `4.5` | Hardware: seconds of frames kept before each HUD death report (the collision is ~2-3 s before it) |
@@ -250,6 +251,14 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 
 Vision-path behaviour applied automatically (each individually A/B-validated;
 override with the matching env var only if you're experimenting):
+- **Fire alternation** (`VSEARCH_FIRE_ALT`, radius `VSEARCH_FIRE_ALT_R`
+  400 px): the game fires a laser 2 frames after the fire direction changes
+  and only every 8 frames while it is held, so when the bot would repeat its
+  fire direction and a second killable target is in range, it fires at that
+  one this tick instead. Double laser throughput at no cost to the primary
+  target. The largest measured effect in the project: deaths/wave down
+  25-35% at every stage of a proxy -> exact-state -> real-vision ladder,
+  vision record W60 -> W117 (`docs/FIRE_ALT_EXPERIMENT.md`).
 - **Fire-at-the-binding-threat** (`VSEARCH_FIREPLAN`): shoot the launcher
   that's boxing you in — close-fired sparks arrive faster than any dodge can
   react, so killing the source is the only defence. The single biggest vision

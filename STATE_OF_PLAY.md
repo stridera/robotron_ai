@@ -1,4 +1,4 @@
-# Robotron 2084 bot — state of play (updated 2026-09-14)
+# Robotron 2084 bot — state of play (updated 2026-09-15)
 
 A single-page orientation for anyone (or any fresh context) picking this up.
 Facts only; every number below comes from a logged run. The complete history of

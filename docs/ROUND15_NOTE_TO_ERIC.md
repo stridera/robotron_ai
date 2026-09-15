@@ -23,6 +23,19 @@ received from the console can say what is killing the bot there. In fourteen
 rounds we have never seen where the player was, what was next to it, or how
 long a command took to show up on screen when it died.
 
+## Update, September 15: this build also plays differently
+
+Overnight we found something in the game's own code. Robotron fires a laser 2
+frames after you *change* the fire direction, but only every 8 frames while
+you *hold* it. So if the bot switches its fire stick between two targets on
+every decision, it shoots twice as often, and the main target still gets the
+same shots it always did. On the emulator that cut deaths per wave by about a
+third at every stage we tested, and the first uncapped video games reached
+**wave 117** and **wave 90**, against a previous record of 60. Round 15 has
+this switched on. So this round does two things at once: it records what
+kills the bot on your console, and it shows what doubling the fire rate does
+there.
+
 ## What round 15 gathers
 
 The new build records two things while it plays, into the same
@@ -34,9 +47,9 @@ The new build records two things while it plays, into the same
 - For every death, the previous four and a half seconds of video frames plus
   one second after, as still images.
 
-Nothing about how it plays has changed. It is the round-14 bot with a
-recorder attached, and the recording happens after each command is sent, so
-it does not slow the bot down. The folder will be a few hundred megabytes
+Apart from the fire-alternation change above, how it plays is unchanged from
+round 14. The recording happens after each command is sent, so it does not
+slow the bot down. The folder will be a few hundred megabytes
 after five games instead of a few kilobytes.
 
 ## How it helps
