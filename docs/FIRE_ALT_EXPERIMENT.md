@@ -108,3 +108,10 @@ send menu inputs. Xenia stages wait for an unlocked interactive session
 576-game fresh-process proxy confirmation was started instead at 20:26
 (`robotron_ai/logs/firealt_confirm_20260914`), with a FIRE_ALT_R 100/250 sweep
 queued behind it.
+
+### Stage 2 interim (20:56, 121 valid games/arm of 576, fresh seeds, fresh process per game, LAB_LAG=0.7)
+
+NET delta **+0.316, whole-game bootstrap 95% CI [+0.267, +0.365]**; candidate
+deaths/wave 0.834, score/wave 28,717, mean max wave 26.0 (W26 cap). Reproduces
+stage 1 on independent seeds and the newer calibration. Final numbers below
+when the batch completes.
