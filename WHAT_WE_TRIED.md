@@ -34,7 +34,7 @@ measured every one of them, most of them more than once.
 
 | The idea | What happened | |
 |---|---|---|
-| "Shoot faster" | ✅ **Yes, and it was the breakthrough (Sep 2026).** The game only fires every 8 frames while you hold the stick, but 2 frames after every *change*. Alternating between two targets each tick doubles the shots. Deaths per wave fell ~30% at every test stage and the video bot went from a W60 record to **W117**. | [details](#fire-alternation) |
+| "Shoot faster" | ✅ **Yes, and it was the breakthrough (Sep 2026).** The game only fires every 8 frames while you hold the stick, but 2 frames after every *change*. Alternating between two targets each tick doubles the shots. Deaths per wave fell ~30% at every test stage and the video bot went from a W60 record to **W198**. | [details](#fire-alternation) |
 | "Circle the field / keep moving in a loop" | ❌ Tried **5 separate times** since March. All worse or no effect. | [details](#circle-the-field-kiting) |
 | "Shoot the spawners first" | ❌ Tried **6 times**. It always cost score and never cut deaths. | [details](#shoot-spawners-first) |
 | "Just shoot constantly" | 🅿️ Slightly fewer deaths, slightly less score. A wash. | [details](#always-be-shooting) |
@@ -67,7 +67,7 @@ earlier version, so it helps to know the eras.
 | Jul 2026 | Same bot on the Xbox game, reading the game's memory | **W158** | Showed delay was the gap. Memory reading isn't possible on a real console. |
 | Jul 2026 | Same bot on **video only** (the version Eric runs) | mean ≈ 13.5, best W26 | Detection solved. Stuck at a plateau. |
 | Late Jul–Aug | Video bot rework + hardware rounds 1–12 with Eric | first life-positive video bot; scoreboard reading correct on Eric's rig | |
-| Sep 14–15 2026 | **Fire alternation**: switch the fire stick between two targets every tick, because the game fires 2 frames after a change and only every 8 while held | **W117 and W90 on video** (previous record W60); deaths per wave down 25–35% at every stage of a one-night confirmation ladder | Found in the game's own code, not by tuning. Shipped on by default. |
+| Sep 14–15 2026 | **Fire alternation**: switch the fire stick between two targets every tick, because the game fires 2 frames after a change and only every 8 while held | **W117, W90 and W198 on video** (previous record W60); deaths per wave down 25–35% at every stage of a one-night confirmation ladder | Found in the game's own code, not by tuning. Shipped on by default. |
 | Sep 2026 | Delay work: fresher frames and aiming ahead | **mean ≈ 31, records W58 / W60** | The ceiling for this design at this delay ([§5](#5-four-things-we-measured-that-constrain-every-new-idea)) |
 
 **There are three versions of the same bot, and the difference matters:**
@@ -1225,8 +1225,8 @@ frames instead of every 8, and the main target still gets a shot every 8.
 to +0.33). On the real Xbox code with perfect information, W25–40 deaths per
 wave fell from 1.22 to 0.76. On real video with the shipping setup, 12 games a
 side: W5–25 1.06 → 0.81, W25–40 1.33 → 1.10, ten of twelve games reached the
-W40 cap against one of twelve. Uncapped video games then reached **W117** and
-**W90** against baseline games ending at 31, 16 and 31. Score per wave was
+W40 cap against one of twelve. Uncapped video games then reached **W117**, **W90**
+and **W198** against baseline games ending at 31, 16 and 31. Score per wave was
 unchanged or slightly up throughout; rescues unchanged.
 
 **Why it works when so much else didn't:** it doesn't ask the bot to see

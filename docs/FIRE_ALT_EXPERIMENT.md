@@ -219,9 +219,12 @@ late band, real-vision W5-25 and W25-40.
 | 3 | fire_alt | **90** | 2,473,400 | 91 | 1.24 |
 | 4 | base | 16 | 399,025 | 17 | — |
 | 5 | base | 31 | 799,975 | 30 | — |
-| 6 | fire_alt | (in progress) | | | |
+| 6 | fire_alt | **198** | 5,419,750 | 193 | 1.02 |
 
-Before this the vision bot's record was W60 (2026-09-06). Above W40 the
-fire_alt bot runs ~1.12 deaths/wave against ~27.7k points/wave (~1.1 lives
-bought per wave): break-even, the regime the memory-input champion rides to
-W100-158. Promoted 2026-09-15: default ON for the vision path, radius 400 px.
+Final (11:40): fire_alt max waves 117 / 90 / 198, base 31 / 16 / 31. Before
+this the vision bot's record was W60 (2026-09-06). Above W40 the fire_alt bot
+runs 1.02-1.24 deaths/wave against ~27.3-28.3k points/wave (~1.1 lives bought
+per wave): break-even to slightly positive, the regime the memory-input
+champion rides to W100-158. The W198 game is the deepest any bot in this
+project has reached on any input. Promoted 2026-09-15: default ON for the
+vision path, radius 400 px.

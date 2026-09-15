@@ -7,7 +7,7 @@ every attempt since March 2026, written for non-engineers, is
 depends on Claude's project-memory notes (their content is folded into the two
 docs; see section 8).
 
-## 0a. 2026-09-14/15: fire alternation — wave 117 on real vision
+## 0a. 2026-09-14/15: fire alternation — waves 117, 90 and 198 on real vision
 
 **The mechanism (from the ROM).** Robotron's fire task (robomame.asm
 `$31B9`-`$3235`) fires a laser 2 frames after the fire direction is set or
@@ -31,14 +31,16 @@ numbers in [docs/FIRE_ALT_EXPERIMENT.md](docs/FIRE_ALT_EXPERIMENT.md)):
 | Xenia exact state, W5-25 | 8 | 0.780 -> 0.429 | +0.35, p < 0.001 |
 | **Xenia real vision, shipping config, W5-25** | 12 | 1.063 -> 0.806 | +0.257 [+0.132, +0.387] |
 | **Xenia real vision, W25-40** | 12 | 1.328 -> 1.104 | +0.225 [+0.094, +0.396] |
-| Xenia real vision, uncapped, R=400 | 3 | max wave 31 / 16 / 31 vs **117 / 90** / (third pending) | — |
+| Xenia real vision, uncapped, R=400 | 3 | max wave 31 / 16 / 31 vs **117 / 90 / 198** | — |
 
 Income and rescues per wave are unchanged at every stage; the gain is faster
 killing. In the real-vision 12/arm run ten of twelve fire_alt games reached the
-W40 cap against one of twelve baseline games. Uncapped, the W117 game scored
-3.14M with 114 deaths and ran ~1.12 deaths/wave above W40 against ~1.1 lives
-bought per wave: break-even, the regime the memory-input champion rides to
-W100-158. The vision bot's previous record was W60.
+W40 cap against one of twelve baseline games. Uncapped, the three fire_alt
+games reached W117 (3.14M), W90 (2.47M) and **W198 (5.42M, 193 deaths)**,
+running 1.02-1.24 deaths/wave above W40 against ~1.1 lives bought per wave:
+break-even to slightly positive, the regime the memory-input champion rides to
+W100-158. The vision bot's previous record was W60; W198 is the deepest any
+bot in this project has reached on any input.
 
 Everything else screened in the same queue lost: discounted 10-step horizon
 −0.137, act-lag + age-advance −0.109, and the re-screens of max-clearance

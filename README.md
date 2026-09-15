@@ -84,7 +84,7 @@ python -m venv .venv
   player will start dodging, shooting, and rescuing the family on its own,
   15 decisions per second.
 - It plays *well*. On the emulator it now typically reaches **wave 40+** and
-  its record is **wave 117** (2026-09-15, after the fire-alternation change
+  its record is **wave 198** (2026-09-15, after the fire-alternation change
   below). It will still die eventually; that's Robotron.
 - Want to watch what it's "seeing"? Add `--visualize` to the command — a
   window opens showing every enemy it detects and the direction it chose.
@@ -258,7 +258,7 @@ override with the matching env var only if you're experimenting):
   one this tick instead. Double laser throughput at no cost to the primary
   target. The largest measured effect in the project: deaths/wave down
   25-35% at every stage of a proxy -> exact-state -> real-vision ladder,
-  vision record W60 -> W117 (`docs/FIRE_ALT_EXPERIMENT.md`).
+  vision record W60 -> W198 (`docs/FIRE_ALT_EXPERIMENT.md`).
 - **Fire-at-the-binding-threat** (`VSEARCH_FIREPLAN`): shoot the launcher
   that's boxing you in — close-fired sparks arrive faster than any dodge can
   react, so killing the source is the only defence. The single biggest vision

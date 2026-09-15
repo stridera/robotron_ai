@@ -30,8 +30,8 @@ frames after you *change* the fire direction, but only every 8 frames while
 you *hold* it. So if the bot switches its fire stick between two targets on
 every decision, it shoots twice as often, and the main target still gets the
 same shots it always did. On the emulator that cut deaths per wave by about a
-third at every stage we tested, and the first uncapped video games reached
-**wave 117** and **wave 90**, against a previous record of 60. Round 15 has
+third at every stage we tested, and the first three uncapped video games reached
+**waves 117, 90 and 198**, against a previous record of 60. Round 15 has
 this switched on. So this round does two things at once: it records what
 kills the bot on your console, and it shows what doubling the fire rate does
 there.
