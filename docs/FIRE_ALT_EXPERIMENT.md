@@ -140,3 +140,14 @@ satisfied the waiter; all 288 games in each were valid.)
 `robotron_ai/logs/firealt_confirm_20260914/report.json`. Confirmed on the
 W5-25 proxy at the project's highest power. Not yet a late-game or
 real-vision claim: Xenia stages A and B are still pending the unlocked desktop.
+
+### Radius sweep, part 2 (22:26-23:17, same runner, 144 games/arm each)
+
+| FIRE_ALT_R | base deaths/wave | candidate deaths/wave | candidate score/wave | NET delta (95% CI) |
+|---:|---:|---:|---:|---|
+| 400 px | 1.106 | 0.775 | 28,348 | +0.379 [+0.339, +0.419] |
+| 2000 px (unlimited) | 1.094 | 0.765 | 28,360 | +0.370 [+0.324, +0.415] |
+
+Plateau from ~400 px: 100 → +0.204, 160 → +0.311, 250 → +0.342, 400 → +0.379,
+unlimited → +0.370 (the last three overlap). The second shot is free at any
+range, so the production default should be 400 px when the knob is promoted.
