@@ -128,3 +128,15 @@ Monotone in the radius: the second shot is free, so a farther second target
 still pays. 400 px and unlimited (2000 px) queued next. (These two batches ran
 concurrently with the 576-game confirmation because a stale completion line
 satisfied the waiter; all 288 games in each were valid.)
+
+### Stage 2 final (22:10, 576 valid games/arm, fresh seeds, fresh process per game, LAB_LAG=0.7; 3 invalid episodes replaced)
+
+| arm | mean max wave (W26 cap) | deaths/wave W5-25 | score/wave | NET lives/wave |
+|---|---:|---:|---:|---:|
+| base | 22.60 | 1.097 | 27,430 | +0.000 |
+| fire_alt (R=160) | 26.30 | 0.828 | 28,493 | +0.311 |
+
+**NET delta +0.311, whole-game bootstrap 95% CI [+0.289, +0.333].** Report:
+`robotron_ai/logs/firealt_confirm_20260914/report.json`. Confirmed on the
+W5-25 proxy at the project's highest power. Not yet a late-game or
+real-vision claim: Xenia stages A and B are still pending the unlocked desktop.

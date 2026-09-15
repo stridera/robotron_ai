@@ -7,6 +7,31 @@ every attempt since March 2026, written for non-engineers, is
 depends on Claude's project-memory notes (their content is folded into the two
 docs; see section 8).
 
+## 0a. 2026-09-14 evening: fire alternation — the first proxy result that survives confirmation
+
+The ROM's fire task (robomame.asm `$31B9`-`$3235`) fires a laser 2 frames
+after the fire direction is set or changed and every 8 frames while it is
+held; a change clears the count. At our 4-frame tick, alternating between two
+live targets every tick fires every 4 frames: double laser throughput with no
+loss toward the primary target. Implemented as opt-in `VSEARCH_FIRE_ALT=1`
+(dev and production planners; `--fire-alt` on the CLI), default off.
+
+| stage | games/arm | deaths/wave base -> candidate | NET delta (95% CI) |
+|---|---:|---|---|
+| proxy screen (cal_d10, LAB_LAG 0.3) | ~131 | 1.127 -> 0.844 | +0.309 [+0.266, +0.353] |
+| proxy confirmation, fresh seeds, fresh process, LAB_LAG 0.7 | 576 | 1.097 -> 0.828 | **+0.311 [+0.289, +0.333]** |
+| radius 100 / 250 px (144/arm each) | 144 | 1.081 -> 0.911 / 1.091 -> 0.787 | +0.204 / +0.342 |
+
+The effect is present in every wave band and largest in W20-25 (1.43 -> 1.05);
+rescues per wave are unchanged, so it is faster killing. Every other arm in
+the same queue lost (discounted 10-step horizon −0.137, act-lag + age-advance
+−0.109, and the re-screens of max-clearance −0.154 and wall repulsion −0.208,
+which close the section-5 caveat). The XBLA game runs the same 6809 bytes, so
+the mechanism should transfer; the Xenia exact-state W25-40 and real-vision
+A/Bs (`robotron/xenia_night_20260914.ps1`) are pending an unlocked desktop
+session. Full record: [docs/FIRE_ALT_EXPERIMENT.md](docs/FIRE_ALT_EXPERIMENT.md).
+Not promoted until Xenia confirms.
+
 ## 0. 2026-09-14: the weekend screens, console round 14, and the console instrument
 
 **The weekend (GPT Astra, Sept 12-14, unattended Xenia).** Twelve isolated
