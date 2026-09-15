@@ -83,3 +83,28 @@ Results are appended below as they arrive.
 All four closed. The two re-screens settle the STATE_OF_PLAY caveat that
 WALL_W / MAXCLR had only been measured on the proxy build without rescue
 seeking: they lose on the corrected build too.
+
+### Stage 1 by wave band (same games)
+
+| band | base deaths/wave | fire_alt deaths/wave | base score/wave | fire_alt score/wave | rescues/wave (base / fire_alt) |
+|---|---:|---:|---:|---:|---|
+| W1-4 | 0.109 | 0.088 | 11,752 | 11,896 | 3.75 / 3.72 |
+| W5-9 | 0.842 | 0.567 | 27,870 | 27,871 | 7.74 / 7.54 |
+| W10-14 | 1.000 | 0.761 | 26,880 | 26,753 | 7.80 / 7.75 |
+| W15-19 | 1.347 | 0.984 | 26,820 | 27,758 | 7.77 / 7.83 |
+| W20-25 | 1.426 | 1.045 | 30,367 | 31,361 | 9.42 / 9.28 |
+
+The reduction is present in every band and largest in absolute terms in the
+densest one; rescues per wave are unchanged, so this is faster killing, not a
+change in the rescue economy — the shape one would expect from doubled laser
+throughput.
+
+### Stage 2 status (20:26)
+
+Xenia stage A launched at 20:24 and aborted at once: the desktop session is
+locked (foreground window = Windows lock screen), so the focus guard refused to
+send menu inputs. Xenia stages wait for an unlocked interactive session
+(`robotron/xenia_night_20260914.ps1` runs A then B once MAME is idle). The
+576-game fresh-process proxy confirmation was started instead at 20:26
+(`robotron_ai/logs/firealt_confirm_20260914`), with a FIRE_ALT_R 100/250 sweep
+queued behind it.
