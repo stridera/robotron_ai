@@ -49,6 +49,26 @@ LEAST_BAD = os.environ.get("VSEARCH_LEAST_BAD", "0") == "1"
 ASMDYN = os.environ.get("VSEARCH_ASMDYN", "1") == "1"
 FIREPLAN = os.environ.get("VSEARCH_FIREPLAN", "0") == "1"
 FIREPLAN_HULK_R = float(os.environ.get("VSEARCH_FIREPLAN_HULK_R", "90"))
+# DISCOUNT (2026-09-14, opt-in): horizon-discounted clearance. Longer horizons
+# (H 8-14) always lost because the coarse chase model over-predicts danger far
+# out, so every heading looked bad and the planner deviated from the FSM too
+# often. With DISCOUNT g > 0 the clearance at step t counts as clr*(1 + g*t):
+# near threats bind as before, far ones must be proportionally closer to bind.
+# Screened together with VSEARCH_H=10. 0 = byte-identical to the champion.
+DISCOUNT = float(os.environ.get("VSEARCH_DISCOUNT", "0"))
+# FIRE_ALT (2026-09-14, opt-in; ROM asm:31D1-31DF + 3229): the fire task counts
+# frames since the fire direction last CHANGED; a laser fires when the count
+# hits 2 and then every 8 frames while the direction is held; a change clears
+# the count. At our 4-frame decision tick, holding gives one shot per 8 frames;
+# alternating between two directions every tick gives a shot every 4 frames —
+# the same rate toward the primary target plus a free shot toward a second.
+# With FIRE_ALT=1, when this tick's fire direction equals last tick's and
+# another killable non-hulk threat within FIRE_ALT_R lies in a different
+# compass direction, fire at that one instead this tick.
+FIRE_ALT = os.environ.get("VSEARCH_FIRE_ALT", "0") == "1"
+FIRE_ALT_R = float(os.environ.get("VSEARCH_FIRE_ALT_R", "160"))
+LAST_FIRE = 0
+_FIRE_ALT_SKIP = frozenset(("Player", "Mikey", "Mommy", "Daddy", "Hulk"))
 # Per-class clearance weights for the two spark-band A/B knobs (2026-07-30).
 # Both measured FLAT at 1.15-2.4x on vision — kept as env knobs, not defaults.
 SPARK_W = float(os.environ.get("VSEARCH_W_SPARK", "1.8"))
@@ -178,7 +198,7 @@ def _heading_clearance(px, py, T, d, H, return_argmin=False):
     tx = tx.copy(); ty = ty.copy()
     tvx = tvx.copy(); tvy = tvy.copy()
     worst = 1e18; worst_i = 0
-    for _ in range(H):
+    for step_i in range(H):
         ppx = min(PX_MAX, max(PX_MIN, ppx + dx_))
         ppy = min(PY_MAX, max(PY_MIN, ppy + dy_))
         if chase.any():
@@ -199,13 +219,15 @@ def _heading_clearance(px, py, T, d, H, return_argmin=False):
                 ty = np.where(lo, 2 * PY_MIN - ty, np.where(hi, 2 * PY_MAX - ty, ty))
             tx = np.clip(tx, PX_MIN, PX_MAX); ty = np.clip(ty, PY_MIN, PY_MAX)
         clr = np.sqrt((ppx - tx) ** 2 + (ppy - ty) ** 2) / w
+        if DISCOUNT > 0.0:
+            clr = clr * (1.0 + DISCOUNT * step_i)
         i = int(clr.argmin()); m = float(clr[i])
         if m < worst:
             worst = m; worst_i = i
     return (worst, worst_i) if return_argmin else worst
 
 
-def clearance_search(sprites, fsm_mv, first_fire):
+def _clearance_search_impl(sprites, fsm_mv, first_fire):
     """Guarded multi-step clearance override over pre-extracted sprites
     [(x, y, name, vx, vy), ...]. Keeps the FSM move unless its heading is in
     danger and a clearly-safer heading exists (minimal deviation)."""
@@ -251,3 +273,45 @@ def clearance_search(sprites, fsm_mv, first_fire):
         if nm[bi] != "Hulk" or ((bx - px) ** 2 + (by - py) ** 2) <= FIREPLAN_HULK_R ** 2:
             return best_d, _dir_toward(px, py, bx, by)
     return best_d, first_fire
+
+
+def set_fire_alt(on: bool, radius: float = None) -> None:
+    """Enable/disable FIRE_ALT after import (mirrors set_fireplan)."""
+    global FIRE_ALT, FIRE_ALT_R, LAST_FIRE
+    FIRE_ALT = bool(on)
+    if radius is not None:
+        FIRE_ALT_R = float(radius)
+    LAST_FIRE = 0
+
+
+def _alternate_fire(sprites, fire):
+    """FIRE_ALT: see the knob comment. Returns the fire direction to send."""
+    global LAST_FIRE
+    if FIRE_ALT and fire >= 1 and fire == LAST_FIRE:
+        player = next((s for s in sprites if s[2] == "Player"), None)
+        if player is not None:
+            px, py = player[0], player[1]
+            best = None
+            r2 = FIRE_ALT_R * FIRE_ALT_R
+            for s in sprites:
+                if s[2] in _FIRE_ALT_SKIP:
+                    continue
+                d2 = (s[0] - px) ** 2 + (s[1] - py) ** 2
+                if d2 > r2 or d2 < 1.0:
+                    continue
+                dd = _dir_toward(px, py, s[0], s[1])
+                if dd != fire and (best is None or d2 < best[0]):
+                    best = (d2, dd)
+            if best is not None:
+                fire = best[1]
+    LAST_FIRE = fire
+    return fire
+
+
+def clearance_search(sprites, fsm_mv, first_fire):
+    """Guarded multi-step clearance override (see _clearance_search_impl),
+    plus the opt-in FIRE_ALT fire-direction alternation."""
+    mv, fire = _clearance_search_impl(sprites, fsm_mv, first_fire)
+    if FIRE_ALT:
+        fire = _alternate_fire(sprites, fire)
+    return mv, fire
