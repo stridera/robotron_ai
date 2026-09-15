@@ -74,11 +74,12 @@ confirmed-only projectile ghosts (a coasted track needs a second sighting
 before it is kept), read NET +0.186 CI [+0.031, +0.335] at 12/arm and
 **−0.026 CI [−0.185, +0.130] on an independent 9/arm replication**; not
 promoted. Two MAME screens (two-step turning paths, collision sub-steps) also
-lost. Full record: `WEEKEND_RESULTS.md`, `DAY_REPORT.md`, `NIGHT_REPORT.md`
-and `logs/weekend_20260912/` in the main checkout. **Note:** that work is
-uncommitted there (five modified source files with the opt-in knobs, plus
-`tests/`, `tools/` and ten markdown reports); nothing in it changes the
-shipping defaults.
+lost. Full record: [docs/archive/weekend_20260912/](docs/archive/weekend_20260912/)
+(reports) and `logs/weekend_20260912/` in the main checkout (artifacts).
+Reviewed 2026-09-15: the twelve opt-in knobs and the weekend automation were
+not merged (all null; preserved verbatim on branch `weekend-20260912-raw`);
+the fresh-process MAME runner (`tools/run_collision_mame_fresh.py`) was kept
+and is what the fire-alternation confirmation ran on.
 
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while

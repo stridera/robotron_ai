@@ -1210,6 +1210,42 @@ played, and each game's end is reported only once.
 
 ---
 
+<a id="weekend-20260912"></a>
+<details>
+<summary>❌ <b>Weekend of September 12–14 (GPT Astra, unattended)</b>: twelve video-bot tweaks and four planner variants, none confirmed</summary>
+
+The emulator ran unattended for the weekend under an automated review loop.
+Every change was an opt-in switch screened at 8–12 games a side on the real
+game with the bot's own video input (W25 cap), scored on NET lives per wave
+with a whole-game bootstrap. Full record: `docs/archive/weekend_20260912/`.
+
+| change | idea | NET vs baseline (95% interval) | verdict |
+|---|---|---|---|
+| timestamp-normalised tracking | divide velocities by the real time between frames instead of assuming one tick | −0.110 [−0.243, +0.022] | no |
+| tracker reset on a scoreboard-read death | forget stale tracks after dying | +0.060 [−0.112, +0.213] | inconclusive |
+| tracker reset on a wave change | same at wave transitions | +0.069 [−0.075, +0.215] | inconclusive |
+| fresh player coordinates only | never plan from a held (reused) player position | +0.068 [−0.098, +0.216] | inconclusive |
+| neutral-lead reset | after 0.3 s of neutral stick, stop leading the player along the old command | +0.133 [−0.069, +0.312] | inconclusive (one invalid game) |
+| full player bounds in the planner | let the simulated player reach the true wall positions | −0.064 [−0.271, +0.126] | no |
+| one-to-one velocity matching | stop two detections sharing one old track's velocity | +0.000 [−0.051, +0.054] | null |
+| stationary electrodes | zero the velocity of electrodes | +0.076 [−0.104, +0.269] | inconclusive |
+| closest-pair projectile association | match projectile tracks by distance, not detector order | −0.005 [−0.215, +0.208] | null |
+| spark birth velocity | give a newly seen spark its launcher's direction as an initial velocity | −0.063 [−0.218, +0.093] | no |
+| command-history player lead | blend the previous command into the player's lead at a turn | −0.125 [−0.286, +0.014] | no |
+| confirmed-only projectile ghosts | keep a coasted track only after a second sighting | **+0.186 [+0.031, +0.335]**, then **−0.026 [−0.185, +0.130]** on an independent 9/arm replication | not confirmed |
+
+On the emulator-proxy farm (144 games a side): two-step turning paths −0.203
+[−0.242, −0.162]; turn variants −0.17 to −0.33; a joint move-and-shoot search
+−0.02 / −0.01; projectile velocity fans −0.02 / −0.12; collision sub-step
+sampling −0.03; a residual learned policy on top of the champion +0.011
+[−0.031, +0.055] (its greedy version was identical to the champion).
+
+**What it tells us:** the tracking and timing details of the vision path are
+not where the losses are; a dozen careful fixes to them moved nothing. The
+one thing that did move the numbers the next night (fire alternation) was in
+the game's fire routine, not in the bot's perception.
+</details>
+
 <a id="fire-alternation"></a>
 <details>
 <summary>✅ <b>Fire alternation</b> (Sep 14–15 2026): switch the fire stick between two targets every tick</summary>
