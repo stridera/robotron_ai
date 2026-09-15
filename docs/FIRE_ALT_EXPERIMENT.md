@@ -193,3 +193,35 @@ Per game: base max wave [40, 35, 20, 18, 33, 23], deaths [44, 36, 18, 16, 34,
 20]; fire_alt max wave [40, 40, 40, 40, 34, 40], deaths [33, 28, 35, 34, 30,
 30]. Mean max wave 28.2 vs 39.0 (p = 0.005). The first real-vision evidence:
 the effect survives the detector, the coaster and the ~2-tick loop latency.
+
+### Stage B final — Xenia REAL VISION (2026-09-15 08:34, 12 games/arm, shipping config, W40 cap)
+
+Recomputed on the exact stage-B window (03:27:50-08:34; the night script's own
+stats used a PowerShell 5.1 `%s` timestamp that runs seven hours early and so
+also swept in the stage-A games).
+
+| band | base deaths/wave (95% CI) | fire_alt deaths/wave (95% CI) | delta (95% CI) | score/wave base / fire_alt |
+|---|---|---|---|---|
+| W5-25 | 1.063 [0.979, 1.133] | 0.806 [0.706, 0.901] | +0.257 [+0.132, +0.387] | 27,976 / 29,340 |
+| W25-40 | 1.328 [1.219, 1.485] | 1.104 [1.040, 1.172] | +0.225 [+0.094, +0.396] | 27,413 / 28,527 |
+
+Max wave per game: base [18, 18, 18, 20, 23, 24, 31, 33, 33, 35, 39, 40];
+fire_alt [34, 37, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40]. The full ladder
+holds on real vision: proxy screen, 576-game fresh confirmation, exact-state
+late band, real-vision W5-25 and W25-40.
+
+### Stage C — uncapped real vision, FIRE_ALT_R=400 (2026-09-15 08:35-, 3 games/arm, interleaved, no wave cap)
+
+| game | arm | max wave | score | deaths | W41+ deaths/wave |
+|---|---|---:|---:|---:|---:|
+| 1 | base | 31 | 788,525 | 30 | — |
+| 2 | fire_alt | **117** | 3,135,375 | 114 | 1.04 |
+| 3 | fire_alt | **90** | 2,473,400 | 91 | 1.24 |
+| 4 | base | 16 | 399,025 | 17 | — |
+| 5 | base | 31 | 799,975 | 30 | — |
+| 6 | fire_alt | (in progress) | | | |
+
+Before this the vision bot's record was W60 (2026-09-06). Above W40 the
+fire_alt bot runs ~1.12 deaths/wave against ~27.7k points/wave (~1.1 lives
+bought per wave): break-even, the regime the memory-input champion rides to
+W100-158. Promoted 2026-09-15: default ON for the vision path, radius 400 px.

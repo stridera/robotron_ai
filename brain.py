@@ -37,6 +37,7 @@ from .engine.clearance_planner import (clearance_search, DXY,  # noqa: E402
 # memory-optimal 18/10 absorbs vision tracking noise (mean 14.4 vs 13.6,
 # worst-game floor W10 vs W7); 1.3x regressed. Memory path keeps 18/10.
 VISION_MARGINS = (21.0, 12.0)
+VISION_FIRE_ALT_R = 400.0   # fire-alternation second-target radius (proxy plateau)
 from . import coords                                          # noqa: E402
 
 _ENGINE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine")
@@ -233,11 +234,17 @@ class ChampionBrain:
         # VSEARCH_FIREPLAN always wins, for A/B.
         if use_coaster and not _USER_PINNED_FIREPLAN:
             set_fireplan(True)
-        # Fire-direction alternation (2026-09-14, docs/FIRE_ALT_EXPERIMENT.md):
-        # explicit argument wins, then an env-pinned VSEARCH_FIRE_ALT, else
-        # the planner default (off until the Xenia stages confirm).
-        if fire_alt is not None and not _USER_PINNED_FIRE_ALT:
-            set_fire_alt(bool(fire_alt))
+        # Fire-direction alternation (docs/FIRE_ALT_EXPERIMENT.md). Default ON
+        # for the vision path since 2026-09-15: proxy 576/arm NET +0.311;
+        # Xenia exact state W25-40 deaths/wave 1.22 -> 0.76; real vision
+        # 12/arm W5-25 1.06 -> 0.81 and W25-40 1.33 -> 1.10; first uncapped
+        # vision games W117 and W90 (previous record W60). Radius 400 px is
+        # the proxy plateau (100 +0.20, 160 +0.31, 250 +0.34, 400 +0.38,
+        # unlimited +0.37). Explicit argument wins, then an env-pinned
+        # VSEARCH_FIRE_ALT (A/B purity), else on for vision / off for memory.
+        if not _USER_PINNED_FIRE_ALT:
+            on = use_coaster if fire_alt is None else bool(fire_alt)
+            set_fire_alt(on, VISION_FIRE_ALT_R if on else None)
         self.last_mv = 0
         self._setup_fsm(debug)
 

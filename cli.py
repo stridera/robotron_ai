@@ -129,8 +129,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="fire-direction alternation: when the fire direction "
                           "would repeat and a second killable target is in range, "
                           "fire at it this tick (ROM fires 2 frames after a change "
-                          "vs every 8 held: ~2x laser throughput; proxy NET +0.31, "
-                          "2026-09-14). Default off until Xenia confirms")
+                          "vs every 8 held: ~2x laser throughput). DEFAULT ON for "
+                          "vision since 2026-09-15 (Xenia vision W5-25 deaths/wave "
+                          "1.06 -> 0.81; uncapped games W117, W90); this flag "
+                          "only matters for memory input")
     brn.add_argument("--no-fire-alt", dest="fire_alt", action="store_false",
                      help="force fire alternation off")
     brn.add_argument("--vel-ema", type=float, default=0.5,

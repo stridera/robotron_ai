@@ -83,10 +83,22 @@ class BrainWiringTest(unittest.TestCase):
         self.assertEqual(len(set(fires)), 2)          # alternates between the two targets
         self.assertEqual(fires[0], fires[2])
 
-    def test_brain_default_leaves_planner_alone(self):
+    def test_vision_default_is_on_with_400px_radius(self):
         from .. import brain as brain_mod
         cp.set_fire_alt(False)
         brain_mod.ChampionBrain(lag_ticks=0.7, use_coaster=True)
+        self.assertTrue(cp.FIRE_ALT)
+        self.assertEqual(cp.FIRE_ALT_R, 400.0)
+
+    def test_memory_default_is_off(self):
+        from .. import brain as brain_mod
+        cp.set_fire_alt(True)
+        brain_mod.ChampionBrain(lag_ticks=0.25, use_coaster=False)
+        self.assertFalse(cp.FIRE_ALT)
+
+    def test_explicit_false_wins_on_vision(self):
+        from .. import brain as brain_mod
+        brain_mod.ChampionBrain(lag_ticks=0.7, use_coaster=True, fire_alt=False)
         self.assertFalse(cp.FIRE_ALT)
 
 
