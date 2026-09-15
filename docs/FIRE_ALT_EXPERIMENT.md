@@ -181,3 +181,15 @@ per wave 8.27 vs 8.18. The perfect-information planner's late band goes from
 Xbox game code, and the late-band effect is roughly twice what the Monte Carlo
 says makes W100 likely. Stage B (real vision, 12/arm, W40 cap) started 03:28;
 stage C (uncapped vision depth, R=400) is chained behind it.
+
+### Stage B interim — Xenia REAL VISION, shipping config (2026-09-15 06:03, 6 games/arm of 12, yolo6, eye-sync, W40 cap)
+
+| band | base deaths/wave (95% CI) | fire_alt deaths/wave (95% CI) | delta | score/wave base / fire_alt |
+|---|---|---|---|---|
+| W5-25 | 1.075 [1.019, 1.122] | 0.810 [0.643, 0.944] | +0.27, p = 0.004 | 27,749 / 29,523 |
+| W25-40 | 1.387 [1.182, 1.667] | 1.042 [0.979, 1.115] | +0.35, p = 0.021 | 28,716 / 28,340 |
+
+Per game: base max wave [40, 35, 20, 18, 33, 23], deaths [44, 36, 18, 16, 34,
+20]; fire_alt max wave [40, 40, 40, 40, 34, 40], deaths [33, 28, 35, 34, 30,
+30]. Mean max wave 28.2 vs 39.0 (p = 0.005). The first real-vision evidence:
+the effect survives the detector, the coaster and the ~2-tick loop latency.
