@@ -115,3 +115,16 @@ NET delta **+0.316, whole-game bootstrap 95% CI [+0.267, +0.365]**; candidate
 deaths/wave 0.834, score/wave 28,717, mean max wave 26.0 (W26 cap). Reproduces
 stage 1 on independent seeds and the newer calibration. Final numbers below
 when the batch completes.
+
+### Radius sweep (fresh-process runner, 144 games/arm each with its own base, LAB_LAG=0.7; 20:27-21:40)
+
+| FIRE_ALT_R | base deaths/wave | candidate deaths/wave | candidate score/wave | NET delta (95% CI) |
+|---:|---:|---:|---:|---|
+| 100 px | 1.081 | 0.911 | 28,596 | +0.204 [+0.157, +0.249] |
+| 160 px (default; stage-2 interim) | — | 0.834 | 28,717 | +0.316 [+0.267, +0.365] |
+| 250 px | 1.091 | 0.787 | 28,285 | +0.342 [+0.293, +0.390] |
+
+Monotone in the radius: the second shot is free, so a farther second target
+still pays. 400 px and unlimited (2000 px) queued next. (These two batches ran
+concurrently with the 576-game confirmation because a stale completion line
+satisfied the waiter; all 288 games in each were valid.)
