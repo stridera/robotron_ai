@@ -22,6 +22,8 @@ class Observation:
     """One tick of perception, in planner pixel space."""
     player: Optional[Tuple[float, float]]          # None => player not visible
     entities: List[Tuple[float, float, str]] = field(default_factory=list)
+    sampled_at: Optional[float] = None           # monotonic capture/read time
+    player_hold_samples: int = 0                # diagnostic: reused player coordinates
 
 
 class Perception(ABC):
@@ -159,6 +161,8 @@ class HdmiSource(FrameSource):
         # frame age is bounded by one card-frame instead of a queue.
         self._lock = threading.Lock()
         self._latest = None
+        self._latest_at = None
+        self.last_read_at = None
         self._running = True
         # Pump-side counters (hardware round 12): the card-delivered rate
         # and how many of those frames actually CHANGED, measured where the
@@ -194,6 +198,7 @@ class HdmiSource(FrameSource):
                 self._pump_prev = tiny
                 with self._lock:
                     self._latest = frame
+                    self._latest_at = time.perf_counter()
 
     def stats(self):
         """Card-side rates since open: frames the pump received per second
@@ -208,6 +213,7 @@ class HdmiSource(FrameSource):
             frame = self._latest       # newest frame, re-served if the card
                                        # is slower than the loop (a duplicate
                                        # tick beats a blind tick)
+            self.last_read_at = self._latest_at
         if frame is None:
             return None
         if frame.shape[1] != self.w or frame.shape[0] != self.h:
@@ -481,6 +487,8 @@ class VisionPerception(Perception):
 
     def perceive(self, state) -> Observation:
         frame = self.source.read()
+        import time
+        sampled_at = getattr(self.source, 'last_read_at', None) or time.perf_counter()
         # last_frame is kept unconditionally (a reference, not a copy): the
         # HUD bookkeeper reads score/wave from it on the hardware path.
         self.last_frame = frame
@@ -496,4 +504,5 @@ class VisionPerception(Perception):
         self.last_boxes = viz_boxes
         self.last_player_px = player_px
         player = self._resolve_player(player)
-        return Observation(player, ents)
+        return Observation(player, ents, sampled_at,
+                           self._player_hold if player is not None else 0)

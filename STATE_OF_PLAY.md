@@ -1,8 +1,68 @@
 # Robotron 2084 bot — state of play (2026-09-06)
 
+**September 14 final:** weekend testing ended at 09:00:28 PDT. No confirmed
+policy improvement or W100; the strongest screen failed independent replication.
+No gameplay remains running and no candidate is promoted. Final results and
+post-deadline saved-data audit: [WEEKEND_RESULTS.md](WEEKEND_RESULTS.md).
+
 A single-page orientation for anyone (or any fresh context) picking this up.
 Facts only; every number below comes from a logged run. Deeper detail lives in
 the files listed at the end.
+
+**September 13 01:15 PDT:** latest startup verification stalled after its first
+game saved W28 / 710025; Python failed to exit. Batch preserved as incomplete.
+Root added explicit inference-thread/pad cleanup, shutdown stack traces, and a
+parent-enforced 45-second post-result exit limit; 29 production tests passed.
+Replacement `weekend_shutdownverify_20260913` tests four full games, default
+policy with visual recording in one arm. Earlier fresh-player and neutral-lead
+screens were inconclusive; no production promotion or new W100. See DAY_REPORT.md.
+
+**2026-09-12 weekend:** user authorized continuous supervised research through
+Monday September 14 at 09:00 Pacific. Task Scheduler recovery + local monitor + bounded Codex reviews
+are installed and running. Consecutive-game restart verification passed and
+the full timing screen is active. Further tests will be prepared from results;
+see [WEEKEND_TEST_PLAN.md](WEEKEND_TEST_PLAN.md). Live: [WEEKEND_STATUS.md](WEEKEND_STATUS.md).
+Detailed stop/recovery instructions: [RESUME.md](RESUME.md). No promotion.
+
+**September 12 14:08:** user confirmed 80% remaining cycle capacity. Removed
+the supervisor's arbitrary daily token/review-count gates and resumed pending
+review; bounded serial execution and error cooldown remain. See DAY_REPORT.md
+for the first 48 complete comparison games and their inconclusive results.
+
+**2026-09-11 audit:** Xenia timing A/B did not finish: 3/16 completed games
+(baseline W25 and W23, timed W18), insufficient evidence. After each game over,
+the next process failed to start a new game; two one-hour timeouts consumed
+the batch limit. Cold emulator launches played normally. Nothing running.
+Fix production test-rig restart before repeating the comparison. See RESUME.md.
+
+**2026-09-10 17:14 PDT:** supervisor exit-code loss reproduced and fixed.
+Production Xenia timestamp comparison started: 8 games/arm, cap W40, maximum
+2.5 hours. Live status: `logs/production_timing_20260910/status.txt`.
+No production promotion; see [RESUME.md](RESUME.md).
+
+**2026-09-10 status:** recovered training completed 3,002,160 decisions. The
+sampled-actor MAME screen completed 144 valid games/arm: NET delta +0.01086,
+95% CI [-0.03099, +0.05506], below the confirmation entry threshold. No proven
+gain. A supervisor exit-status error prevented Xenia from starting. Nothing
+running at 10:46 PDT. Operational handoff: [RESUME.md](RESUME.md).
+
+**2026-09-09 daytime:** score-read diagnosis and exact replay completed all seven
+overnight screens (144 valid games per arm); no convincing gain. New current-
+champion residual learning and opt-in production timestamp tracking are under
+test. See [DAY_REPORT.md](DAY_REPORT.md). No production promotion or W100 result.
+The learned-correction evaluation protocol is [RESIDUAL_EXPERIMENT.md](RESIDUAL_EXPERIMENT.md).
+
+**2026-09-09 follow-up:** the collision-sampling screen found no improvement;
+the interrupted Xenia comparison points worse. Experiment details, verification,
+and production/dev discrepancies are recorded in
+[`COLLISION_EXPERIMENT.md`](COLLISION_EXPERIMENT.md). The experiment is opt-in;
+no new gameplay improvement or wave-100 result has been established.
+
+The two-step turning-path MAME screen regressed (NET -0.2033 vs baseline);
+see [`TURN_PATH_EXPERIMENT.md`](TURN_PATH_EXPERIMENT.md). The authorized overnight
+queue tests follow-up turning, joint move/fire, and velocity-uncertainty ideas:
+[`OVERNIGHT_EXPERIMENTS.md`](OVERNIGHT_EXPERIMENTS.md), live
+[`NIGHT_REPORT.md`](NIGHT_REPORT.md). These are dev-only experiments.
 
 ## 1. Goal and constraint
 

@@ -19,6 +19,14 @@ import numpy as np
 CLEAR_H = int(os.environ.get("VSEARCH_H", "6"))
 CLEAR_DANGER = float(os.environ.get("VSEARCH_CLEAR_DANGER", "18"))
 CLEAR_MARGIN = float(os.environ.get("VSEARCH_CLEAR_MARGIN", "10"))
+# Experimental collision sampling; 1 preserves the validated endpoint-only
+# planner. 4 checks at nominal game-frame intervals without changing the
+# coarse-step chase model, search horizon, decision cadence or safety margins.
+COLLISION_SUBSTEPS = int(os.environ.get("VSEARCH_COLLISION_SUBSTEPS", "1"))
+if not 1 <= COLLISION_SUBSTEPS <= 16:
+    raise ValueError("VSEARCH_COLLISION_SUBSTEPS must be in [1, 16]")
+_COLLISION_FRACTIONS = (np.arange(1, COLLISION_SUBSTEPS, dtype=float)
+                        / COLLISION_SUBSTEPS)[:, None]
 
 
 def set_margins(danger: float, margin: float) -> None:
@@ -62,6 +70,14 @@ DXY = {1: (0.0, -9.2), 2: (9.5, -9.2), 3: (9.5, 0.0), 4: (9.5, 9.2),
 DXY = {d: (x * _FS_SCALE, y * _FS_SCALE) for d, (x, y) in DXY.items()}
 _DXY_NOMINAL = {d: v for d, v in DXY.items()}
 PX_MIN, PX_MAX, PY_MIN, PY_MAX = 10.0, 655.0, 10.0, 482.0
+# Opt-in production coordinate-parity screen: video player wall positions map
+# to 0..665 / 0..492 (coords.py). The inherited inset can move a wall-pinned
+# player ten pixels inward even when the commanded heading points outward.
+# Enemy bounds/dynamics and clearance margins deliberately remain independent.
+PLAYER_FULL_BOUNDS = os.environ.get("VSEARCH_PLAYER_FULL_BOUNDS", "0") == "1"
+PLAYER_X_MIN, PLAYER_X_MAX, PLAYER_Y_MIN, PLAYER_Y_MAX = (
+    (0.0, 665.0, 0.0, 492.0) if PLAYER_FULL_BOUNDS
+    else (PX_MIN, PX_MAX, PY_MIN, PY_MAX))
 
 # ── decision-tick rescaling (2026-07-28) ──────────────────────────────────
 # Every per-step constant here (DXY player displacement, the chase-speed
@@ -166,6 +182,34 @@ def _classify_threat(name, vx, vy):
     return 1.0, False, spd, False                    # Tank/Spheroid/other
 
 
+def _intermediate_clearance(px, py, dx, dy, tx0, ty0, tx1, ty1, w, refl):
+    """Per-threat minimum at intermediate fractions of ONE coarse step.
+
+    tx1/ty1 are the pre-wall endpoints from the existing dynamics. Interpolate
+    before reflecting/clamping, so a bank shot visits the wall instead of
+    taking a false straight chord between its start and reflected endpoint.
+    Likewise, a player that reaches a wall stops there at the correct fraction.
+    Sampling excludes t=0: it adds future checks, not an identical initial
+    clearance ceiling on every escape. This is sampled, not swept, collision
+    checking; impacts between the extra samples can still be missed.
+    """
+    f = _COLLISION_FRACTIONS
+    pxs = np.clip(px + dx * f, PLAYER_X_MIN, PLAYER_X_MAX)
+    pys = np.clip(py + dy * f, PLAYER_Y_MIN, PLAYER_Y_MAX)
+    xs = tx0 + (tx1 - tx0) * f
+    ys = ty0 + (ty1 - ty0) * f
+    if ASMDYN:
+        reflect = refl == 1
+        if reflect.any():
+            xs = np.where(reflect & (xs < PX_MIN), 2 * PX_MIN - xs,
+                          np.where(reflect & (xs > PX_MAX), 2 * PX_MAX - xs, xs))
+            ys = np.where(reflect & (ys < PY_MIN), 2 * PY_MIN - ys,
+                          np.where(reflect & (ys > PY_MAX), 2 * PY_MAX - ys, ys))
+        xs = np.clip(xs, PX_MIN, PX_MAX)
+        ys = np.clip(ys, PY_MIN, PY_MAX)
+    return np.sqrt((pxs - xs) ** 2 + (pys - ys) ** 2).min(axis=0) / w
+
+
 def _heading_clearance(px, py, T, d, H, return_argmin=False):
     """Min weighted clearance if the player commits to heading d for H env-steps.
     T = (tx,ty,vx,vy,w,chase,spd,refl) numpy arrays. Chasers re-aim toward the
@@ -179,8 +223,10 @@ def _heading_clearance(px, py, T, d, H, return_argmin=False):
     tvx = tvx.copy(); tvy = tvy.copy()
     worst = 1e18; worst_i = 0
     for _ in range(H):
-        ppx = min(PX_MAX, max(PX_MIN, ppx + dx_))
-        ppy = min(PY_MAX, max(PY_MIN, ppy + dy_))
+        if COLLISION_SUBSTEPS > 1:
+            px0, py0, tx0, ty0 = ppx, ppy, tx, ty
+        ppx = min(PLAYER_X_MAX, max(PLAYER_X_MIN, ppx + dx_))
+        ppy = min(PLAYER_Y_MAX, max(PLAYER_Y_MIN, ppy + dy_))
         if chase.any():
             ax = ppx - tx; ay = ppy - ty
             dist = np.sqrt(ax * ax + ay * ay) + 1e-6
@@ -189,6 +235,9 @@ def _heading_clearance(px, py, T, d, H, return_argmin=False):
             ty = np.where(chase, ty + ay * step, ty + tvy)
         else:
             tx = tx + tvx; ty = ty + tvy
+        if COLLISION_SUBSTEPS > 1:
+            intermediate = _intermediate_clearance(
+                px0, py0, dx_, dy_, tx0, ty0, tx, ty, w, refl)
         if ASMDYN:
             if refl.any():
                 lo = refl & (tx < PX_MIN); hi = refl & (tx > PX_MAX)
@@ -199,6 +248,8 @@ def _heading_clearance(px, py, T, d, H, return_argmin=False):
                 ty = np.where(lo, 2 * PY_MIN - ty, np.where(hi, 2 * PY_MAX - ty, ty))
             tx = np.clip(tx, PX_MIN, PX_MAX); ty = np.clip(ty, PY_MIN, PY_MAX)
         clr = np.sqrt((ppx - tx) ** 2 + (ppy - ty) ** 2) / w
+        if COLLISION_SUBSTEPS > 1:
+            clr = np.minimum(clr, intermediate)
         i = int(clr.argmin()); m = float(clr[i])
         if m < worst:
             worst = m; worst_i = i

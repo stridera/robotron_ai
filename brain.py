@@ -89,28 +89,53 @@ class VelocityTracker:
 
     def __init__(self, alpha: float = 0.5):
         self.alpha = alpha
+        self.unique_matches = os.environ.get('ROBOTRON_VELOCITY_UNIQUE', '0') == '1'
+        self.static_electrodes = os.environ.get('ROBOTRON_STATIC_ELECTRODES', '0') == '1'
         self.prev = []   # [(name, px, py, svx, svy)] — smoothed velocity carried
 
     def reset(self):
         self.prev = []
 
-    def velocities(self, cur):
+    def velocities(self, cur, dt=1.0):
         """cur = [(px, py, name)]. Returns [(svx, svy)] aligned with cur."""
         out, new_prev = [], []
         a = self.alpha
-        for (px, py, name) in cur:
+        # Opt-in identity constraint for non-coasted entities. The legacy
+        # nearest-neighbour loop can assign one old entity to several new
+        # detections, copying its velocity history into multiple tracks.
+        # Assign shortest same-class pairs first; unmatched detections start
+        # at zero velocity, just as legacy unmatched detections do.
+        matches = {}
+        if self.unique_matches:
+            pairs = sorted(((px-pe[1])**2 + (py-pe[2])**2, i, j)
+                           for i, (px, py, name) in enumerate(cur)
+                           for j, pe in enumerate(self.prev)
+                           if pe[0] == name and (px-pe[1])**2 + (py-pe[2])**2 <= (self.VMAX*dt)**2)
+            used = set()
+            for _, i, j in pairs:
+                if i not in matches and j not in used:
+                    matches[i] = self.prev[j]
+                    used.add(j)
+        for i, (px, py, name) in enumerate(cur):
             best, bd = None, 1e18
-            for pe in self.prev:
+            for pe in (() if self.unique_matches else self.prev):
                 if pe[0] != name:
                     continue
                 d = (px - pe[1]) ** 2 + (py - pe[2]) ** 2
                 if d < bd:
                     bd, best = d, pe
-            if best is not None and bd <= self.VMAX ** 2:
-                rvx, rvy = px - best[1], py - best[2]
+            if self.unique_matches and i in matches:
+                best, bd = matches[i], 0.0
+            if best is not None and bd <= (self.VMAX * dt) ** 2:
+                rvx, rvy = (px - best[1]) / dt, (py - best[2]) / dt
                 svx = a * rvx + (1 - a) * best[3]
                 svy = a * rvy + (1 - a) * best[4]
             else:
+                svx = svy = 0.0
+            # Electrodes are stationary obstacles. Detection jitter and nearby
+            # identity swaps otherwise become fictitious obstacle motion in
+            # both latency extrapolation and the clearance horizon.
+            if self.static_electrodes and name == 'Electrode':
                 svx = svy = 0.0
             out.append((svx, svy))
             new_prev.append((name, px, py, svx, svy))
@@ -145,6 +170,9 @@ class ProjectileCoaster:
     def __init__(self, ttl: float = 3.0, turn: float = 0.0):
         self.ttl = ttl
         self.turn = turn
+        self.closest_pairs = os.environ.get('ROBOTRON_COAST_CLOSEST_PAIRS', '0') == '1'
+        self.spark_birth = os.environ.get('ROBOTRON_SPARK_BIRTH_VELOCITY', '0') == '1'
+        self.confirmed_ghosts = os.environ.get('ROBOTRON_COAST_CONFIRMED_ONLY', '0') == '1'
         self.tracks = []   # dicts: x,y coasted pos; lx,ly last-seen; vx,vy; name; miss
 
     def reset(self):
@@ -162,7 +190,23 @@ class ProjectileCoaster:
         ang = cur + max(-max_turn, min(max_turn, diff))
         return speed * math.cos(ang), speed * math.sin(ang)
 
-    def update(self, dets, player=None, dt=1.0):
+    @staticmethod
+    def _birth_velocity(x, y, name, launchers):
+        # Only a detected spark with one nearby visible Enforcer is eligible.
+        # This estimates its initial motion; it never creates a projectile.
+        if name != 'EnforcerBullet':
+            return 0.0, 0.0
+        nearby = [(lx, ly) for lx, ly, n in launchers if n == 'Enforcer'
+                  and (lx-x)**2 + (ly-y)**2 <= 60.0**2]
+        if len(nearby) != 1:
+            return 0.0, 0.0
+        lx, ly = nearby[0]
+        distance = ((x-lx)**2 + (y-ly)**2)**.5
+        if distance < 8.0:
+            return 0.0, 0.0
+        return 12.0*(x-lx)/distance, 12.0*(y-ly)/distance
+
+    def update(self, dets, player=None, dt=1.0, launchers=()):
         """dets: [(x, y, name)] seen THIS sample (planner space). dt in decision
         ticks. Returns [(x, y, name, vx, vy)] for every live track — fresh
         detections plus unseen tracks coasted along their velocity."""
@@ -170,18 +214,40 @@ class ProjectileCoaster:
             t['x'] += t['vx'] * dt
             t['y'] += t['vy'] * dt
             t['hit'] = False
-        for (x, y, name) in dets:
+        # Opt-in: reserve the closest prediction/detection pairs before weaker
+        # matches can consume them in detector output order. The same gates,
+        # velocity update, TTL and one-to-one identity constraint still apply.
+        matches = {}
+        if self.closest_pairs:
+            pairs = []
+            for i, (x, y, name) in enumerate(dets):
+                for j, t in enumerate(self.tracks):
+                    if t['name'] != name:
+                        continue
+                    gate = self.GATE * max(dt, 0.3) * min(1 + t['miss'], 2)
+                    d = (x - t['x']) ** 2 + (y - t['y']) ** 2
+                    if d <= gate ** 2:
+                        pairs.append((d, x, y, t['x'], t['y'], i, j))
+            used = set()
+            for *_, i, j in sorted(pairs):
+                if i not in matches and j not in used:
+                    matches[i] = self.tracks[j]
+                    used.add(j)
+        for i, (x, y, name) in enumerate(dets):
             best, bd = None, 1e18
-            for t in self.tracks:
+            for t in (() if self.closest_pairs else self.tracks):
                 if t['name'] != name or t['hit']:
                     continue
                 gate = self.GATE * max(dt, 0.3) * min(1 + t['miss'], 2)
                 d = (x - t['x']) ** 2 + (y - t['y']) ** 2
                 if d <= gate ** 2 and d < bd:
                     bd, best = d, t
+            if self.closest_pairs:
+                best = matches.get(i)
             if best is None:
-                self.tracks.append(dict(x=x, y=y, lx=x, ly=y, vx=0.0, vy=0.0,
-                                        name=name, miss=0.0, hit=True))
+                vx, vy = self._birth_velocity(x, y, name, launchers) if self.spark_birth else (0.0, 0.0)
+                self.tracks.append(dict(x=x, y=y, lx=x, ly=y, vx=vx, vy=vy,
+                                        name=name, miss=0.0, hit=True, confirmed=False))
                 continue
             n = best['miss'] + dt
             rvx, rvy = (x - best['lx']) / n, (y - best['ly']) / n
@@ -192,6 +258,7 @@ class ProjectileCoaster:
             best['x'], best['y'] = best['lx'], best['ly'] = x, y
             best['miss'] = 0.0
             best['hit'] = True
+            best['confirmed'] = True
         out, keep = [], []
         for t in self.tracks:
             if not t['hit']:
@@ -206,6 +273,12 @@ class ProjectileCoaster:
                         t['vx'], t['vy'],
                         player[0] - t['x'], player[1] - t['y'], self.turn * dt)
             keep.append(t)
+            # A single sighting has no measured velocity. Opt-in: retain its
+            # association history/expiry, but do not present it as a stationary
+            # unseen threat until a second detection confirms the track.
+            # Fresh detections and every confirmed ghost remain visible.
+            if self.confirmed_ghosts and not t['hit'] and not t['confirmed']:
+                continue
             out.append((t['x'], t['y'], t['name'], t['vx'], t['vy']))
         self.tracks = keep
         return out
@@ -217,10 +290,14 @@ class ChampionBrain:
 
     def __init__(self, lag_ticks: float, player_lead_ticks: float = DEFAULT_PLAYER_LEAD,
                  vel_ema_alpha: float = 0.5, use_coaster: bool = False,
-                 debug: bool = False):
+                 debug: bool = False, normalize_tracking_time=None):
         self.lag_ticks = lag_ticks
         self.player_lead_ticks = player_lead_ticks
         self.vt = VelocityTracker(alpha=vel_ema_alpha)
+        self.normalize_tracking_time = (os.environ.get('ROBOTRON_TRACK_TIME', '0') == '1'
+                                        if normalize_tracking_time is None else normalize_tracking_time)
+        self._sample_time = None
+        self._tracked_sample = None
         # Vision path only: projectile track-and-coast (memory input is exact
         # every tick, so coasting there would only add ghosts) + widened
         # planner margins (env-pinned values always win).
@@ -233,6 +310,8 @@ class ChampionBrain:
         if use_coaster and not _USER_PINNED_FIREPLAN:
             set_fireplan(True)
         self.last_mv = 0
+        self.player_history_lead = os.environ.get('ROBOTRON_PLAYER_HISTORY_LEAD', '0') == '1'
+        self._sent_moves = []
         self._setup_fsm(debug)
 
     def _setup_fsm(self, debug: bool):
@@ -258,10 +337,21 @@ class ChampionBrain:
 
     def reset(self):
         """Clear cross-tick state (call on death / wave change)."""
+        self._sent_moves = []
+        self._sample_time = None
+        self._tracked_sample = None
         self.vt.reset()
         if self.coaster is not None:
             self.coaster.reset()
         self.last_mv = 0
+
+    def record_command(self, move, controlled=True):
+        """Remember actual vision-loop commands, including held/neutral ticks.
+
+        Used only by the opt-in turn lead; no observation or oracle input.
+        """
+        if self.player_history_lead:
+            self._sent_moves = (self._sent_moves + [(move, controlled)])[-2:]
 
     def _champion_action(self, sprites):
         """sprites = [(px, py, name, vx, vy), ...] incl. ('Player'). -> (mv, fr) 1..8."""
@@ -286,40 +376,67 @@ class ChampionBrain:
         fr = fr if fr >= 1 else mv
         return clearance_search(sprites, mv, fr)
 
-    def blind_tick(self, entities):
+    def _track(self, entities, player, sampled_at):
+        dt = 1.0
+        if self.normalize_tracking_time:
+            if sampled_at is None:
+                import time
+                sampled_at = time.perf_counter()
+            if self._sample_time is not None:
+                elapsed = sampled_at - self._sample_time
+                if elapsed <= 0 and self._tracked_sample is not None:
+                    return self._tracked_sample
+                if elapsed > .5:
+                    self.vt.reset()
+                    if self.coaster is not None:
+                        self.coaster.reset()
+                else:
+                    dt = max(.05, elapsed * 15.0)
+            self._sample_time = sampled_at
+        cur = list(entities)
+        tracked = []
+        if self.coaster is not None:
+            proj = [e for e in cur if e[2] in ProjectileCoaster.NAMES]
+            cur = [e for e in cur if e[2] not in ProjectileCoaster.NAMES]
+            tracked = self.coaster.update(proj, player, dt=dt, launchers=cur)
+        result = cur, self.vt.velocities(cur, dt=dt), tracked
+        self._tracked_sample = result
+        return result
+
+    def blind_tick(self, entities, sampled_at=None):
         """Feed a tick where the PLAYER box was missed but enemies were seen.
         Without this, tracking freezes on player-blind ticks and resumes a
         tick stale with halved velocities (2026-07-28 fix): the coaster must
         keep associating and ageing, and the velocity tracker must keep its
         identity chain, even when no decision is made."""
-        cur = list(entities)
-        if self.coaster is not None:
-            proj = [e for e in cur if e[2] in ProjectileCoaster.NAMES]
-            cur = [e for e in cur if e[2] not in ProjectileCoaster.NAMES]
-            self.coaster.update(proj, None)
-        self.vt.velocities(cur)
+        self._track(entities, None, sampled_at)
 
-    def decide(self, player_xy, entities):
+    def decide(self, player_xy, entities, sampled_at=None):
         """player_xy = (px, py) planner; entities = [(px, py, name)] planner.
         Returns (move, fire) directions 1..8."""
-        cur = list(entities)
         # Projectile classes go through the track-and-coast layer (it owns
         # their identity AND velocity); everything else keeps the
         # consecutive-frame VelocityTracker.
-        if self.coaster is not None:
-            proj = [e for e in cur if e[2] in ProjectileCoaster.NAMES]
-            cur = [e for e in cur if e[2] not in ProjectileCoaster.NAMES]
-            tracked = self.coaster.update(proj, player_xy)
-        else:
-            tracked = []
-        vels = self.vt.velocities(cur)
+        cur, vels, tracked = self._track(entities, player_xy, sampled_at)
 
         # Player forward-prediction: lead along the last commanded direction.
         plx, ply = player_xy
         if self.player_lead_ticks > 0 and self.last_mv in DXY:
             ldx, ldy = DXY[self.last_mv]
-            plx = min(max(plx + ldx * self.player_lead_ticks, 0.0), coords.PIX_W)
-            ply = min(max(ply + ldy * self.player_lead_ticks, 0.0), coords.PIX_H)
+            dx, dy = ldx * self.player_lead_ticks, ldy * self.player_lead_ticks
+            if (self.player_history_lead and len(self._sent_moves) == 2
+                    and all(controlled and move in DXY for move, controlled in self._sent_moves)
+                    and self._sent_moves[-1][0] == self.last_mv):
+                # At a turn, some in-flight movement still belongs to the
+                # preceding command. Keep total lead fixed; replace half a
+                # tick with that command. Blind/reacquisition behavior remains
+                # legacy until two consecutive controlled sends are available.
+                older = DXY[self._sent_moves[0][0]]
+                weight = min(.5, self.player_lead_ticks)
+                dx += weight * (older[0] - ldx)
+                dy += weight * (older[1] - ldy)
+            plx = min(max(plx + dx, 0.0), coords.PIX_W)
+            ply = min(max(ply + dy, 0.0), coords.PIX_H)
 
         # Latency extrapolation: advance each entity along its tracked velocity so
         # the planner dodges where threats WILL be, not where they were.

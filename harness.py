@@ -10,12 +10,54 @@ and manage game lifecycle.
     wait_for_game_start  Navigate the Xenia XBLA menus to gameplay.
 """
 import time
+import os
+import json
 from collections import deque
 
 from . import coords
 from . import hud_ocr
 from .engine import clearance_planner as _cp
 from .visualize import VizOverlay, dir_name
+
+
+class HudTrackingReset:
+    """Opt-in tracking reset from accepted video HUD transitions only.
+
+    Death and wave hypotheses are independent. No controller/navigation action,
+    perception flush, or neutral delay is introduced. Initial acquisition,
+    game changes, skipped waves, and game over do not trigger a reset.
+    """
+    def __init__(self, death=False, wave=False, diagnostic=False):
+        self.death = death
+        self.wave = wave
+        self.diagnostic = diagnostic
+        self.previous = None
+
+    def update(self, bookkeeper, brain, player=None):
+        current = (bookkeeper.game_id, bookkeeper.wave, bookkeeper.deaths)
+        previous, self.previous = self.previous, current
+        if (previous is None or previous[0] != current[0]
+                or bookkeeper.game_over_fired):
+            return None
+        died = current[2] > previous[2]
+        advanced = (previous[1] is not None and current[1] is not None
+                    and current[1] == previous[1] + 1)
+        if not (died or advanced):
+            return None
+        reset = (self.death and died) or (self.wave and advanced)
+        if self.diagnostic:
+            coaster = getattr(brain, 'coaster', None)
+            tracks = getattr(coaster, 'tracks', [])
+            print('[hud_tracking] ' + json.dumps(dict(
+                t=time.time(), game=current[0], wave=current[1], deaths=current[2],
+                death_event=died, wave_event=advanced, reset=reset,
+                player=None if player is None else [float(v) for v in player],
+                last_move=int(brain.last_mv),
+                velocity_tracks=len(brain.vt.prev), projectile_tracks=len(tracks),
+                coasted_tracks=sum(t.get('miss', 0) > 0 for t in tracks))), flush=True)
+        if reset:
+            brain.reset()
+        return 'death' if died else 'wave'
 
 
 class TickClock:
@@ -362,11 +404,11 @@ def play_memory_game(brain, perception, controller, gsr, *,
                 # Keep tracking alive on the enemies we DID see, or every
                 # track resumes a tick stale with a halved velocity.
                 if obs.entities:
-                    brain.blind_tick(obs.entities)
+                    brain.blind_tick(obs.entities, sampled_at=obs.sampled_at)
                 controller.neutral()
                 neutral = True
             else:
-                cur_mv, cur_fr = brain.decide(obs.player, obs.entities)
+                cur_mv, cur_fr = brain.decide(obs.player, obs.entities, sampled_at=obs.sampled_at)
                 controller.move_shoot(cur_mv, cur_fr)
 
         # ── Visualize (after acting, so it never delays actuation) ──
@@ -509,7 +551,8 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                      loop_games: bool = False, telemetry=None,
                      menu_start: bool = False, visualize_plain: bool = False,
                      auto_lead: bool = False, games_limit: int = 0,
-                     eye_sync_ms: float = 0.0, hold_action: int = 0):
+                     eye_sync_ms: float = 0.0, hold_action: int = 0,
+                     decision_observer=None):
     """Minimal loop for real hardware. Runs until interrupted (Ctrl+C). Plans and
     acts whenever the player is visible; goes neutral when it isn't.
 
@@ -542,6 +585,13 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     games_done = 0
     prev_go = False
     nav_fails = 0       # consecutive failed recoveries -> escalate to escape
+    fresh_player_action = os.environ.get('ROBOTRON_FRESH_PLAYER_ACTION', '0') == '1'
+    neutral_lead_reset = os.environ.get('ROBOTRON_NEUTRAL_LEAD_RESET', '0') == '1'
+    neutral_since = None
+    hud_tracking = HudTrackingReset(
+        death=os.environ.get('ROBOTRON_HUD_DEATH_RESET', '0') == '1',
+        wave=os.environ.get('ROBOTRON_HUD_WAVE_RESET', '0') == '1',
+        diagnostic=os.environ.get('ROBOTRON_TRANSITION_DIAGNOSTICS', '0') == '1')
     try:
         while True:
             n += 1
@@ -585,6 +635,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                     and n % hud_every == 0 and frame is not None):
                 r = hud_reader.read(frame)
                 bookkeeper.feed(r, player_visible=(obs.player is not None))
+                hud_tracking.update(bookkeeper, brain, obs.player)
                 if telemetry is not None:
                     telemetry.hud(r, frame)
                 # Deaths need no input (the game respawns automatically; the
@@ -633,25 +684,52 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                     # 29,000 ms OVERRUN.
                     clock.next = None
             cur_mv = cur_fr = 0
-            if obs.player is None:
+            # Experimental control-only freshness gate: HUD/navigation retain
+            # the existing bounded player hold. Brief detector blinks reuse
+            # the last command instead of replanning from old coordinates.
+            control_player = (None if fresh_player_action and
+                              getattr(obs, 'player_hold_samples', 0) > 0 else obs.player)
+            if control_player is None:
                 blind += 1
                 if obs.entities:
-                    brain.blind_tick(obs.entities)   # keep tracks ageing
+                    brain.blind_tick(obs.entities, sampled_at=obs.sampled_at)   # keep tracks ageing
                 if hold_action and last_cmd is not None and blind <= hold_action:
                     # Hold-action: keep the last command through a blink
                     # instead of snapping to a standstill.
                     controller.move_shoot(*last_cmd)
                     cur_mv, cur_fr = last_cmd
+                    neutral_since = None
                 else:
                     controller.neutral()
+                    if neutral_since is None:
+                        neutral_since = time.monotonic()
             else:
+                # After sustained neutral input, the old movement command is
+                # no longer a valid lead for the first reacquired position.
+                # This opt-in only clears player prediction, not enemy tracks
+                # or FSM history, and leaves brief command holds unchanged.
+                neutral_seconds = (0.0 if neutral_since is None else
+                                   time.monotonic() - neutral_since)
+                if neutral_seconds >= 0.3:
+                    if os.environ.get('ROBOTRON_TRANSITION_DIAGNOSTICS', '0') == '1':
+                        print('[neutral_lead] ' + json.dumps(dict(
+                            tick=n, seconds=neutral_seconds, reset=neutral_lead_reset,
+                            previous_move=brain.last_mv, player=control_player)), flush=True)
+                    if neutral_lead_reset:
+                        brain.last_mv = 0
+                neutral_since = None
                 blind = 0
-                cur_mv, cur_fr = brain.decide(obs.player, obs.entities)
+                cur_mv, cur_fr = brain.decide(control_player, obs.entities, sampled_at=obs.sampled_at)
                 controller.move_shoot(cur_mv, cur_fr)
                 last_cmd = (cur_mv, cur_fr)
                 if debug:
                     print(f"[vision] p=({obs.player[0]:.0f},{obs.player[1]:.0f}) "
                           f"n={len(obs.entities)} mv={cur_mv} fr={cur_fr}")
+            if getattr(brain, 'player_history_lead', False):
+                brain.record_command(cur_mv, controlled=control_player is not None)
+            if decision_observer is not None:
+                # Evaluation-only sink. Its return value never enters control.
+                decision_observer(obs, cur_mv, cur_fr, brain, control_player)
             if telemetry is not None:
                 telemetry.tick(cur_mv, obs.player,
                                getattr(perception, "last_boxes", None), frame)
