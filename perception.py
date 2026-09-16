@@ -288,8 +288,14 @@ class ThreadedVisionPerception:
     def reset(self):
         self._inner.reset()
 
-    def stop(self):
+    def stop(self, join: float = 0.0):
+        """Stop the eye thread; with `join` > 0 wait up to that many seconds
+        for it to finish its current inference (hardware round 15: leaving a
+        daemon thread mid-inference on the GPU wedged interpreter teardown
+        after --games N, so the process never exited)."""
         self._running = False
+        if join > 0:
+            self._thread.join(timeout=join)
 
 
 # ── Vision perception (YOLO) ────────────────────────────────────────────────

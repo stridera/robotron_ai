@@ -273,6 +273,17 @@ override with the matching env var only if you're experimenting):
   instead of silently mispredicting (this is what makes slower hardware rigs
   behave correctly).
 
+### Rig calibration (hardware, automatic)
+
+The report's `reversal_ticks` is the rig's command-to-screen loop latency
+measured from 180-degree move reversals (emulator: 2 ticks; Eric's console in
+round 15: 3-4). Auto-lead sets the player's forward prediction from it
+(lead = reversal − 0.5) once it has 12 samples, and saves the measurement to
+`logs/hardware_report/rig_calibration.json` so the next run starts from it.
+An explicit `--player-lead` always wins. The older `act_ticks` estimator is
+kept in the report for comparison but is not trusted: it counts a 45-degree
+turn as an instant response and read 1.0 on a rig whose true loop was 3.
+
 ### Decision trace and death windows (hardware, on by default)
 
 Fourteen hardware rounds sent back only `report.json` and a few screenshots.

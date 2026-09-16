@@ -502,6 +502,18 @@ def ensure_game_running(perception, hud_reader, controller,
     return False
 
 
+def auto_lead_target(median_ticks, from_reversal):
+    """Player forward-prediction (ticks) from a measured loop latency.
+
+    Reversal estimator (round 15): the emulator's reversals show at +2 and its
+    validated lead is 1.5, so lead = reversal - 0.5; the console's +3 gives
+    2.5. Legacy change-based estimator: lead = act + 0.5 (round 12 rule,
+    since that estimator understates by ~half a tick). Clamped to [0.5, 3.5]."""
+    if from_reversal:
+        return min(max(float(median_ticks) - 0.5, 0.5), 3.5)
+    return min(max(float(median_ticks) + 0.5, 0.5), 2.5)
+
+
 # ── Hardware game loop (vision only, no memory) ─────────────────────────────
 def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                      start_seq: bool = False, debug: bool = False,
@@ -557,7 +569,14 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             # at one cadence. The act estimator measures it live from pure
             # vision; feed it back, exactly like the emulator's autocal.
             if (auto_lead and telemetry is not None and n % 300 == 0):
-                st = telemetry.act.stats()
+                # Hardware round 15: the old change-based estimator read
+                # 1.0 tick on the console (a 45-degree turn counts as an
+                # immediate response) while the console's reversals showed
+                # 3-4 ticks, so auto-lead set 1.5 on a rig that needed ~2.5.
+                # Prefer the reversal estimator once it has enough samples.
+                rv = getattr(telemetry, 'reversal', None)
+                rst = rv.stats() if rv is not None else dict(n=0, median=None)
+                st = rst if rst['n'] >= 12 and rst['median'] is not None else telemetry.act.stats()
                 if st['n'] >= 60 and st['median'] is not None:
                     # Stability gate: apply only when two consecutive checks
                     # agree (the median is whole-tick quantized, so one noisy
@@ -575,7 +594,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                         # rig measures act = 1.0 tick, so the old rule set 0.5
                         # every session — ~0.17 lives/wave left on the table —
                         # while the emulator's validated 1.5 fits act + 0.5.
-                        want = min(max(st['median'] + 0.5, 0.5), 2.5)
+                        want = auto_lead_target(st['median'], st is rst)
                         if abs(want - brain.player_lead_ticks) >= 0.25:
                             print(f"[brain] auto-lead: measured act "
                                   f"{st['median']:.1f} ticks (n={st['n']}) "
@@ -715,4 +734,5 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             telemetry.finalize(tick_stats=clock.stats(),
                                center_off=getattr(perception,
                                                   'center_measured', None),
-                               capture_stats=cap_stats)
+                               capture_stats=cap_stats,
+                               player_lead=getattr(brain, 'player_lead_ticks', None))

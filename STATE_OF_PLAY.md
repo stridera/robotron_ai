@@ -81,6 +81,32 @@ not merged (all null; preserved verbatim on branch `weekend-20260912-raw`);
 the fresh-process MAME runner (`tools/run_collision_mame_fresh.py`) was kept
 and is what the fire-alternation confirmation ran on.
 
+**Console round 15 (Eric, Sept 15, ten games, fire alternation on, trace on) —
+the diagnosis.** Waves 20, 16, 9, 21, 13, 17, 20, 18, 19, 22 (mean 17.5 vs 12
+in round 14). The trace's reversal test answers the question section 0 was
+written to ask: on the console a move reversal shows on screen **3 ticks
+later in 61% of cases and 4 in 26%**, against 2 ticks in 92% on the
+emulator. One to two ticks (70-130 ms) of extra loop latency, location still
+unknown (capture chain, controller box, or the console's own output). Ruled
+out by the same trace: player speed (ratio 1.03, controller and scale
+correct), eye stalls (sample age 1-3 ms, no gaps), blindness (24%, the same
+as the emulator's 19-21%). Consequences visible in the data: the bot flips
+heading every tick under the latency (an electrode death shows E, SW, E, SW,
+SW, SE in the last six commands), and 32% of deaths have no visible killer
+at the collision tick (18% on the emulator), most with a coasted projectile
+track nearby. Per band the console runs ~1.5x the emulator's alternation
+death rate (W5-9 1.04 vs 0.64, W10-16 1.16 vs 0.79, W17-22 1.33 vs 0.88) at
+10-15% lower income. The legacy actuation estimator read 1.0 tick on the
+console (a 45-degree turn counts as an instant response), so auto-lead had
+set the player lead to 1.5 where the reversal rule gives 2.5. Fixed
+2026-09-16: `ReversalEstimator` in telemetry (same definition as the offline
+analysis; reproduces the console's 3 and the emulator's 2), auto-lead =
+reversal − 0.5, persisted per rig in `rig_calibration.json`; the exit hang
+after `--games N` (a daemon inference thread at interpreter teardown) is
+fixed; the death-window cap is 120. Round 16 runs with `--player-lead 2.5`
+pinned, and optionally a second session with `--capture-fourcc YUY2` to test
+whether the compressed capture path carries the delay.
+
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while
 the emulator went from a W13.5 mean to ~W30 with the same code. Per wave,

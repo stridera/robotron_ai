@@ -95,6 +95,82 @@ class ActEstimator:
                     p90=s[int(len(s) * 0.9)])
 
 
+class ReversalEstimator:
+    """Command-to-screen loop latency from 180-degree move reversals, in
+    decision ticks (hardware round 15). The ActEstimator above counts any
+    command change and accepts a 45-degree turn as 'responded' at once, so
+    it read 1.0 on the console while the console's true loop was 3-4 ticks;
+    the emulator reads 2. A reversal is unambiguous: after a heading held
+    HOLD ticks flips to its opposite, count ticks until the observed player
+    velocity aligns (> 0.7) with the new heading. Events where the command
+    changes again before alignment are discarded. Same definition as
+    trace_report.reversal_latency, so live and offline numbers agree."""
+    HOLD = 3
+    MAX_K = 6
+    ALIGN = 0.7
+    SPEED = 1.5
+    OPP = {1: 5, 5: 1, 3: 7, 7: 3, 2: 6, 6: 2, 4: 8, 8: 4}
+
+    def __init__(self, dxy):
+        self.dxy = dxy
+        self.hist = deque(maxlen=self.HOLD + 1)   # recent (mv, player)
+        self.samples = deque(maxlen=200)
+        self.unresolved = 0
+        self._evt = None                          # (k, ux, uy, cmd)
+
+    def tick(self, mv, player_xy):
+        import math
+        prev = self.hist[-1] if self.hist else None
+        if self._evt is not None:
+            k, ux, uy, cmd = self._evt
+            if mv != cmd:
+                self._evt = None
+            else:
+                if prev is not None and prev[1] is not None and player_xy is not None:
+                    vx = player_xy[0] - prev[1][0]
+                    vy = player_xy[1] - prev[1][1]
+                    sp = math.hypot(vx, vy)
+                    if sp > self.SPEED and (vx * ux + vy * uy) / sp > self.ALIGN:
+                        self.samples.append(k)
+                        self._evt = None
+                if self._evt is not None:
+                    if k >= self.MAX_K:
+                        self.unresolved += 1
+                        self._evt = None
+                    else:
+                        self._evt = (k + 1, ux, uy, cmd)
+        if (self._evt is None and prev is not None and len(self.hist) == self.HOLD + 1
+                and mv in self.OPP and self.OPP[mv] == prev[0]
+                and all(h[0] == prev[0] for h in self.hist)):
+            d = self.dxy.get(mv)
+            if d and (d[0] or d[1]):
+                mag = math.hypot(d[0], d[1])
+                self._evt = (0, d[0] / mag, d[1] / mag, mv)
+                # alignment may already show on THIS tick's velocity (k=0)
+                if prev[1] is not None and player_xy is not None:
+                    vx = player_xy[0] - prev[1][0]
+                    vy = player_xy[1] - prev[1][1]
+                    sp = math.hypot(vx, vy)
+                    if sp > self.SPEED and (vx * d[0] / mag + vy * d[1] / mag) / sp > self.ALIGN:
+                        self.samples.append(0)
+                        self._evt = None
+                    else:
+                        self._evt = (1, d[0] / mag, d[1] / mag, mv)
+                else:
+                    self._evt = (1, d[0] / mag, d[1] / mag, mv)
+        self.hist.append((mv, player_xy))
+
+    def stats(self):
+        if not self.samples:
+            return dict(median=None, n=0, unresolved=self.unresolved)
+        s = sorted(self.samples)
+        hist = {}
+        for k in s:
+            hist[str(k)] = hist.get(str(k), 0) + 1
+        return dict(median=s[len(s) // 2], n=len(s), p90=s[int(len(s) * 0.9)],
+                    unresolved=self.unresolved, histogram=hist)
+
+
 class HardwareTelemetry:
     """Collects everything; call the hooks from the vision loop, then
     finalize() (also safe on Ctrl+C via the harness's finally)."""
@@ -107,6 +183,7 @@ class HardwareTelemetry:
         os.makedirs(self.out, exist_ok=True)
         self.t0 = time.time()
         self.act = ActEstimator(dxy)
+        self.reversal = ReversalEstimator(dxy)
         self.cls_counts = Counter()
         self.cls_conf = Counter()
         self.ticks = 0
@@ -151,6 +228,7 @@ class HardwareTelemetry:
     def tick(self, mv, player_xy, viz_boxes, frame):
         self.ticks += 1
         self.act.tick(mv, player_xy)
+        self.reversal.tick(mv, player_xy)
         if player_xy is not None:
             self.player_seen += 1
             if self.blind_streak:
@@ -254,6 +332,7 @@ class HardwareTelemetry:
                                          time.gmtime(self.t0)),
             "elapsed_s": round(el, 1),
             "act_ticks": self.act.stats(),
+            "reversal_ticks": self.reversal.stats(),
             "frames": {
                 "delivered_hz": round(self.frames / el, 2),
                 "duplicate_frac": round(self.dup_frames / max(self.frames, 1), 4),
@@ -283,10 +362,44 @@ class HardwareTelemetry:
             "ticks": self.ticks,
         }
 
-    def finalize(self, tick_stats=None, center_off=None, capture_stats=None):
+    CALIBRATION = "rig_calibration.json"
+
+    def save_calibration(self, player_lead=None):
+        """Persist the reversal-based loop latency so the next run on this rig
+        starts from it instead of re-measuring (round 15: ~3 reversal samples
+        per console game, so a fresh run needs most of a session to settle)."""
+        st = self.reversal.stats()
+        if not st.get('n'):
+            return None
+        cal = dict(schema="robotron_ai.rig_calibration.v1",
+                   saved_utc=time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                   reversal_median_ticks=st['median'], reversal_samples=st['n'],
+                   reversal_histogram=st.get('histogram'),
+                   player_lead=player_lead)
+        try:
+            with open(os.path.join(self.out, self.CALIBRATION), "w") as f:
+                json.dump(cal, f, indent=1)
+        except OSError:
+            return None
+        return cal
+
+    @staticmethod
+    def load_calibration(out_dir):
+        try:
+            with open(os.path.join(out_dir, HardwareTelemetry.CALIBRATION)) as f:
+                cal = json.load(f)
+            if cal.get("reversal_samples", 0) >= 12 and cal.get("reversal_median_ticks") is not None:
+                return cal
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def finalize(self, tick_stats=None, center_off=None, capture_stats=None,
+                 player_lead=None):
         if self._finalized:
             return
         self._finalized = True
+        self.save_calibration(player_lead)
         if capture_stats:
             self.capture_stats = capture_stats
         rep = self.report()

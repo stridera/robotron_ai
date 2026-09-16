@@ -141,7 +141,7 @@ class DeathRing:
     SUBDIR = "deaths"
 
     def __init__(self, out_dir, hz=15.0, before_s=4.5, after_s=1.0,
-                 max_events=60, quality=85):
+                 max_events=120, quality=85):
         self.dir = os.path.join(out_dir, self.SUBDIR)
         self.n_before = max(1, int(round(before_s * hz)))
         self.n_after = max(0, int(round(after_s * hz)))
@@ -266,7 +266,7 @@ class HardwareTrace:
     SUMMARY = "trace_summary.json"
 
     def __init__(self, out_dir, hz=15.0, death_before_s=4.5, death_after_s=1.0,
-                 max_deaths=60, decisions=True, deaths=True):
+                 max_deaths=120, decisions=True, deaths=True):
         self.out_dir = out_dir
         self.decisions = DecisionTrace(out_dir) if decisions else None
         self.ring = (DeathRing(out_dir, hz=hz, before_s=death_before_s,

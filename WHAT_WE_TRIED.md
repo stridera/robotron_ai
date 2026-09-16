@@ -67,6 +67,7 @@ earlier version, so it helps to know the eras.
 | Jul 2026 | Same bot on the Xbox game, reading the game's memory | **W158** | Showed delay was the gap. Memory reading isn't possible on a real console. |
 | Jul 2026 | Same bot on **video only** (the version Eric runs) | mean ≈ 13.5, best W26 | Detection solved. Stuck at a plateau. |
 | Late Jul–Aug | Video bot rework + hardware rounds 1–12 with Eric | first life-positive video bot; scoreboard reading correct on Eric's rig | |
+| Sep 15 2026 | Console round 15 with fire alternation and the new per-decision recorder | Waves 9–22, mean 17.5 (was 12). The recorder found the console's loop is 3–4 decisions late where the emulator's is 2, and the bot had been predicting its own position a tick short. | First measured explanation of the console gap. Round 16 corrects the prediction. |
 | Sep 14–15 2026 | **Fire alternation**: switch the fire stick between two targets every tick, because the game fires 2 frames after a change and only every 8 while held | **W117, W90 and W198 on video** (previous record W60); deaths per wave down 25–35% at every stage of a one-night confirmation ladder | Found in the game's own code, not by tuning. Shipped on by default. |
 | Sep 2026 | Delay work: fresher frames and aiming ahead | **mean ≈ 31, records W58 / W60** | The ceiling for this design at this delay ([§5](#5-four-things-we-measured-that-constrain-every-new-idea)) |
 

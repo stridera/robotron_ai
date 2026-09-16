@@ -221,6 +221,15 @@ late band, real-vision W5-25 and W25-40.
 | 5 | base | 31 | 799,975 | 30 | — |
 | 6 | fire_alt | **198** | 5,419,750 | 193 | 1.02 |
 
+### Console round 15 (Eric, 2026-09-15, 10 games, R=400, trace on)
+
+Waves 20, 16, 9, 21, 13, 17, 20, 18, 19, 22: mean 17.5 vs 12.0 in round 14
+(five games) on the same rig. Fire direction changed on 95.8% of ticks, so
+alternation was active. Smaller lift than the emulator's because the console
+carries 1-2 extra ticks of loop latency (reversals +3/+4 vs +2); see
+STATE_OF_PLAY section 0. Per band vs the emulator's alternation games:
+deaths/wave W5-9 1.04 vs 0.64, W10-16 1.16 vs 0.79, W17-22 1.33 vs 0.88.
+
 Final (11:40): fire_alt max waves 117 / 90 / 198, base 31 / 16 / 31. Before
 this the vision bot's record was W60 (2026-09-06). Above W40 the fire_alt bot
 runs 1.02-1.24 deaths/wave against ~27.3-28.3k points/wave (~1.1 lives bought

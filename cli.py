@@ -182,9 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="hardware trace: seconds of frames kept before each "
                           "HUD death report (default 4.5: the collision is "
                           "~2-3 s before the report; ~40 MB of RAM per second)")
-    run.add_argument("--max-deaths", type=int, default=60,
+    run.add_argument("--max-deaths", type=int, default=120,
                      help="hardware trace: stop saving death windows after N "
-                          "(default 60, ~3-4 MB each)")
+                          "(default 120, ~3.7 MB each; round 15 hit the old "
+                          "cap of 60 at game 4 of 10)")
     return p
 
 
@@ -348,6 +349,19 @@ def main(argv=None) -> None:
             from .engine.clearance_planner import DXY
             from .telemetry import HardwareTelemetry
             telemetry = HardwareTelemetry(DXY)
+            # Rig calibration (round 16): if a previous run on this rig
+            # measured its loop latency from reversals, start the player
+            # lead there instead of the emulator default and re-measuring.
+            # An explicit --player-lead always wins (auto_lead is False then).
+            if cfg.auto_lead:
+                cal = HardwareTelemetry.load_calibration(telemetry.out)
+                if cal:
+                    lead = harness.auto_lead_target(cal["reversal_median_ticks"], True)
+                    print(f"[cli] rig calibration: reversal latency "
+                          f"{cal['reversal_median_ticks']} ticks "
+                          f"({cal['reversal_samples']} samples, saved "
+                          f"{cal['saved_utc']} UTC) -> player-lead {lead:.2f}")
+                    brain.player_lead_ticks = lead
             hud_reader = bookkeeper = None
             if not cfg.no_hud:
                 from . import hud_ocr
@@ -435,6 +449,25 @@ def main(argv=None) -> None:
     finally:
         controller.close()
         visualizer.close()
+        # Hardware round 15: after --games N the process hung. The threaded
+        # eye and the HDMI pump are daemon threads, and a daemon thread inside
+        # a CUDA inference call at interpreter teardown deadlocks it. Stop
+        # them with a bounded join, release the card, then exit hard: every
+        # report (telemetry, trace) has already been written by the harness.
+        perception = locals().get("perception")
+        if perception is not None:
+            try:
+                if hasattr(perception, "stop"):
+                    perception.stop(join=5.0)
+                src = getattr(perception, "source", None)
+                if src is not None and hasattr(src, "release"):
+                    src.release()
+            except Exception as e:      # noqa: BLE001
+                print(f"[cli] cleanup: {e}")
+        if cfg.mode == "hardware":
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0)
 
 
 if __name__ == "__main__":
