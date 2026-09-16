@@ -349,19 +349,15 @@ def main(argv=None) -> None:
             from .engine.clearance_planner import DXY
             from .telemetry import HardwareTelemetry
             telemetry = HardwareTelemetry(DXY)
-            # Rig calibration (round 16): if a previous run on this rig
-            # measured its loop latency from reversals, start the player
-            # lead there instead of the emulator default and re-measuring.
-            # An explicit --player-lead always wins (auto_lead is False then).
-            if cfg.auto_lead:
-                cal = HardwareTelemetry.load_calibration(telemetry.out)
-                if cal:
-                    lead = harness.auto_lead_target(cal["reversal_median_ticks"], True)
-                    print(f"[cli] rig calibration: reversal latency "
-                          f"{cal['reversal_median_ticks']} ticks "
-                          f"({cal['reversal_samples']} samples, saved "
-                          f"{cal['saved_utc']} UTC) -> player-lead {lead:.2f}")
-                    brain.player_lead_ticks = lead
+            # Rig calibration: a previous run's reversal-measured loop latency
+            # is printed for the operator. It is NOT applied to the lead:
+            # round 16's console A/B (lead 1.5 vs 2.5) found no effect.
+            cal = HardwareTelemetry.load_calibration(telemetry.out)
+            if cal:
+                print(f"[cli] rig calibration: reversal latency "
+                      f"{cal['reversal_median_ticks']} ticks "
+                      f"({cal['reversal_samples']} samples, saved "
+                      f"{cal['saved_utc']} UTC); emulator reference 2")
             hud_reader = bookkeeper = None
             if not cfg.no_hud:
                 from . import hud_ocr

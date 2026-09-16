@@ -131,3 +131,47 @@ class TelemetryReportTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FinalDeathTest(unittest.TestCase):
+    """The death that ends the game has no lives icon to drop; it must still
+    be counted (Eric, round 16: GAME OVER D=10 for an 11-death game)."""
+    def test_game_over_adds_the_final_death(self):
+        from .. import hud_ocr
+        events = []
+        bk = hud_ocr.VisionBookkeeper(on_event=lambda kind, **kw: events.append((kind, kw)))
+        t = 1000.0
+        def feed(score, wave, lives, dt=0.2):
+            nonlocal t
+            t += dt
+            bk.feed(dict(score=score, wave=wave, lives=lives, conf=0.95), t=t, player_visible=True)
+        for _ in range(6):
+            feed(500, 1, 3)
+        for i in range(30):                         # 6 s with 3 lives
+            feed(1000 + i * 100, 2, 3)
+        for i in range(30):                         # a life drops and holds
+            feed(4000 + i * 100, 2, 2)
+        deaths_before = bk.deaths
+        self.assertEqual(deaths_before, 1)
+        for i in range(60):                         # HUD gone 12 s, player gone
+            t += 0.2
+            bk.feed(dict(score=None, wave=None, lives=None, conf=0.0), t=t, player_visible=False)
+        go = [kw for kind, kw in events if kind == 'game_over']
+        self.assertEqual(len(go), 1)
+        self.assertEqual(go[0]['deaths'], 2)        # the counted death + the final one
+        self.assertEqual(bk.deaths, 2)
+
+    def test_demo_end_is_not_a_death(self):
+        from .. import hud_ocr
+        events = []
+        bk = hud_ocr.VisionBookkeeper(on_event=lambda kind, **kw: events.append((kind, kw)))
+        t = 1000.0
+        for i in range(40):
+            t += 0.2
+            bk.feed(dict(score=100 * i, wave=1, lives=3, conf=0.95), t=t, player_visible=True)
+        for i in range(60):
+            t += 0.2
+            bk.feed(dict(score=None, wave=None, lives=None, conf=0.0), t=t, player_visible=False)
+        go = [kw for kind, kw in events if kind == 'game_over']
+        self.assertEqual(len(go), 1)
+        self.assertEqual(go[0]['deaths'], 0)

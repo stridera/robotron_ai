@@ -230,6 +230,11 @@ carries 1-2 extra ticks of loop latency (reversals +3/+4 vs +2); see
 STATE_OF_PLAY section 0. Per band vs the emulator's alternation games:
 deaths/wave W5-9 1.04 vs 0.64, W10-16 1.16 vs 0.79, W17-22 1.33 vs 0.88.
 
+Console round 16 (2026-09-16, lead 2.5, MJPG then YUY2, 10 games each):
+means 16.0 (record W28) and 16.2; deaths/wave by band unchanged from round
+15. The console's late band is latency-bound, not throughput-bound; see
+STATE_OF_PLAY section 0.
+
 Final (11:40): fire_alt max waves 117 / 90 / 198, base 31 / 16 / 31. Before
 this the vision bot's record was W60 (2026-09-06). Above W40 the fire_alt bot
 runs 1.02-1.24 deaths/wave against ~27.3-28.3k points/wave (~1.1 lives bought

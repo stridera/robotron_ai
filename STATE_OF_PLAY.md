@@ -110,6 +110,26 @@ fixed; the death-window cap is 120. Round 16 runs with `--player-lead 2.5`
 pinned, and optionally a second session with `--capture-fourcc YUY2` to test
 whether the compressed capture path carries the delay.
 
+**Console round 16 (Eric, Sept 16, two ten-game sessions, player lead pinned
+2.5; second session `--capture-fourcc YUY2`).** MJPG: waves 11, 14, 28, 12,
+13, 9, 9, 19, 22, 23 (mean 16.0, console record W28). YUY2: 19, 20, 13, 19,
+17, 22, 9, 13, 13, 17 (mean 16.2). Deaths/wave by band vs round 15 (lead 1.5):
+W5-9 1.04 -> 1.00 / 0.86, W10-16 1.16 -> 1.05 / 1.22, W17-22 1.33 -> 1.42 /
+1.67: **the corrected lead changed nothing**, as the MAME latency lab found in
+July (a forward prediction restores the player's position, not the lost
+reaction time). Reversal latency with YUY2: +3 in 64%, +4 in 9% (MJPG 57% /
+29%), same 54 unique frames/s: **the capture format is not the delay** (caveat:
+OpenCV's DirectShow backend reports the converted RGB24 subtype in both logs,
+so the switch itself is unverified). Unseen-killer share 30-33%, wall share
+34-38%, the same as round 15. Verdict: the extra 1-2 ticks sit in the control
+chain (two X-Arcade adapters) or the console's own output, and the bot cannot
+compensate them. Round 17 reverts the lead to the legacy auto rule (the
+reversal estimator stays as the rig diagnostic; `rig_calibration.json` is
+printed, not applied), counts the final game-over death (Eric's catch: the
+last life drops no icon, so every game was one death short), and proposes the
+hardware test: optoisolators directly on a wired 360 pad's D-pad and A/B/X/Y
+contacts, judged by the reversal count in the next trace.
+
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while
 the emulator went from a W13.5 mean to ~W30 with the same code. Per wave,

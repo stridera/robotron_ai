@@ -277,12 +277,14 @@ override with the matching env var only if you're experimenting):
 
 The report's `reversal_ticks` is the rig's command-to-screen loop latency
 measured from 180-degree move reversals (emulator: 2 ticks; Eric's console in
-round 15: 3-4). Auto-lead sets the player's forward prediction from it
-(lead = reversal − 0.5) once it has 12 samples, and saves the measurement to
-`logs/hardware_report/rig_calibration.json` so the next run starts from it.
-An explicit `--player-lead` always wins. The older `act_ticks` estimator is
-kept in the report for comparison but is not trusted: it counts a 45-degree
-turn as an instant response and read 1.0 on a rig whose true loop was 3.
+rounds 15-16: 3-4). It is saved to `logs/hardware_report/rig_calibration.json`
+and printed at the next start as a diagnostic. It is deliberately NOT used to
+set the player's forward prediction: round 16 A/B'd lead 1.5 vs 2.5 on the
+console and found no difference, matching the MAME latency lab (a forward
+prediction restores position, not reaction time). The older `act_ticks`
+estimator drives the legacy auto-lead rule but is not trusted as a latency
+measurement: it counts a 45-degree turn as an instant response and read 1.0
+on a rig whose true loop was 3.
 
 ### Decision trace and death windows (hardware, on by default)
 

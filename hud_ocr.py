@@ -609,6 +609,12 @@ class VisionBookkeeper:
             self.game_over_fired = True
             if self._game_over_id != self.game_id:
                 self._game_over_id = self.game_id
+                # The last life has no icon to drop, so the death that ends
+                # the game was never counted (Eric, round 16). A real game
+                # over IS a death; a demo end (no counted deaths) is not.
+                if self.deaths > 0:
+                    self.deaths += 1
+                    self.wave_deaths += 1
                 self._log_wave(self.wave, t)
                 self.on_event('game_over', game=self.game_id, wave=self.max_wave,
                 score=self.max_score, deaths=self.deaths)

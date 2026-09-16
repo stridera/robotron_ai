@@ -569,14 +569,16 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             # at one cadence. The act estimator measures it live from pure
             # vision; feed it back, exactly like the emulator's autocal.
             if (auto_lead and telemetry is not None and n % 300 == 0):
-                # Hardware round 15: the old change-based estimator read
-                # 1.0 tick on the console (a 45-degree turn counts as an
-                # immediate response) while the console's reversals showed
-                # 3-4 ticks, so auto-lead set 1.5 on a rig that needed ~2.5.
-                # Prefer the reversal estimator once it has enough samples.
-                rv = getattr(telemetry, 'reversal', None)
-                rst = rv.stats() if rv is not None else dict(n=0, median=None)
-                st = rst if rst['n'] >= 12 and rst['median'] is not None else telemetry.act.stats()
+                # Round 16 (2026-09-16): a console A/B of the player lead,
+                # 1.5 (round 15) vs 2.5 (round 16, from the reversal
+                # estimator's 3-tick loop), showed no difference in deaths
+                # per wave in any band (20 games vs 10), matching the MAME
+                # latency lab's finding that a forward prediction does not
+                # compensate actuation lag. So auto-lead keeps the validated
+                # legacy rule; the reversal estimator is reported and
+                # persisted as the rig's loop-latency DIAGNOSTIC only.
+                rst = dict(n=0, median=None)
+                st = telemetry.act.stats()
                 if st['n'] >= 60 and st['median'] is not None:
                     # Stability gate: apply only when two consecutive checks
                     # agree (the median is whole-tick quantized, so one noisy
