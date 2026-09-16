@@ -86,8 +86,11 @@ the diagnosis.** Waves 20, 16, 9, 21, 13, 17, 20, 18, 19, 22 (mean 17.5 vs 12
 in round 14). The trace's reversal test answers the question section 0 was
 written to ask: on the console a move reversal shows on screen **3 ticks
 later in 61% of cases and 4 in 26%**, against 2 ticks in 92% on the
-emulator. One to two ticks (70-130 ms) of extra loop latency, location still
-unknown (capture chain, controller box, or the console's own output). Ruled
+emulator. One to two ticks (70-130 ms) of extra loop latency. The controller
+box (Arduino Uno, 9600 baud, no debounce or delay, optoisolators as button
+presses) is not it; the candidates are the two X-Arcade adapters between the
+optos and the console, and the MJPG capture path; round 16's YUY2 session
+splits them. Ruled
 out by the same trace: player speed (ratio 1.03, controller and scale
 correct), eye stalls (sample age 1-3 ms, no gaps), blindness (24%, the same
 as the emulator's 19-21%). Consequences visible in the data: the bot flips

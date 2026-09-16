@@ -69,11 +69,23 @@ the picture is black or the console output says the card delivers far fewer
 than 50 frames a second, stop and go back to MJPG. The trace's reversal count
 will tell us directly whether the delay changed.
 
-Two questions that would help pin down the rest of the delay: what is the
-controller box (the board, and whether it drives the pad's sticks or
-buttons), and roughly how often its firmware loop updates the pad? At 9600
-baud our command takes about a millisecond to arrive, so the box itself is
-the unknown.
+**Where the delay can be, now that I have read the controller box's README
+and sketch.** The Arduino side is instant: one byte at 9600 baud (about a
+millisecond), no debounce, no delay, pins set the moment the byte arrives.
+So the control-side suspects are the two adapters after it, the X-Arcade
+input adapter and the X-Arcade Xbox 360 adapter, which scan the "button"
+signals and re-encode them as a pad; adapters of that kind typically add
+tens of milliseconds, and there are user reports of the X-Arcade Xbox
+adapter being noticeably slow. The capture-side suspect is the MJPG path
+(compress on the card, decompress on the PC, plus DirectShow buffering).
+The two sessions split them: the second session changes only the capture
+format, so if the reversal count drops there, the capture path carried
+most of the delay; if it does not, the adapters did.
+
+If it turns out to be the adapters, the usual fix is to drive a wired Xbox
+360 pad directly: the same optoisolators soldered across the D-pad and
+A/B/X/Y contacts of a pad, which removes both adapters and reports at the
+pad's own 4-8 ms. That is a soldering job, so let's confirm first.
 
 ## Your notes from round 15
 
