@@ -50,8 +50,11 @@ thinks.
 
 ## What to run
 
-Same command as round 15, from the new zip (it unpacks to
-`C:\robotronai16\robotron_ai`):
+Get the code the same way as every round: the project's GitHub page, the
+green **Code** button, **Download ZIP** (that is `main`; this exact build is
+also tagged `round-16`). Extract it into a fresh `C:\robotronai16`, rename
+the extracted folder to `robotron_ai`, and set up the venv as in the README.
+Then the same command as round 15 plus one flag:
 
 ```
 .venv\Scripts\python -m robotron_ai --mode hardware --device 0 --port COM3 --loop --games 10 --visualize --capture-backend dshow --capture-fourcc MJPG --capture-res 1920x1080 --player-lead 2.5
