@@ -286,6 +286,15 @@ estimator drives the legacy auto-lead rule but is not trusted as a latency
 measurement: it counts a 45-degree turn as an instant response and read 1.0
 on a rig whose true loop was 3.
 
+### Measuring the controller chain by itself
+
+`python -m robotron_ai.tools.measure_control_latency --port COM3` times the
+path serial byte -> Arduino -> optoisolators -> adapters -> Windows controller
+state, with the adapter's USB output plugged into the PC instead of the
+console. The bot's reversal latency is end to end; subtracting this number
+from it leaves the render/output/capture side. A direct wired pad is under
+10 ms; anything above ~60 ms means the adapters carry the delay.
+
 ### Decision trace and death windows (hardware, on by default)
 
 Fourteen hardware rounds sent back only `report.json` and a few screenshots.

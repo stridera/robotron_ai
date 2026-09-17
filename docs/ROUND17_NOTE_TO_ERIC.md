@@ -33,6 +33,29 @@ the picture: the two X-Arcade adapters, or the console's own output path.
 Nothing in the bot's software can remove it, and round 16 shows it cannot be
 compensated either.
 
+## A test that needs no soldering: time the controller chain by itself
+
+The reversal count is end to end (command to pixels), so it cannot say how
+much is the controller side and how much is the console's output and the
+capture. This build has a tool that measures the controller side alone:
+
+1. Unplug the X-Arcade Xbox 360 adapter from the console and plug its USB
+   output into the PC instead (the adapter kit supports PC; Windows should
+   show it under "Set up USB game controllers").
+2. Leave the Arduino box connected as usual, and run:
+
+```
+.venv\Scripts\python -m robotron_ai.tools.measure_control_latency --port COM3
+```
+
+It presses A through your box forty times, watches the controller state as
+fast as Windows reports it, and prints the press and release delays in
+milliseconds. A direct wired pad would read under 10 ms. If this reads 60 ms
+or more, the adapters are the delay and the pad wiring below is the fix. If it
+reads 10-20 ms, the delay is in the console's video output or the capture
+card, and no controller change will help. Either way it settles the question
+in five minutes, before anyone picks up a soldering iron.
+
 ## What I think the next step is
 
 The way to find out, and most likely the fix, is to take the two adapters out
