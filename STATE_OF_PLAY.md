@@ -161,7 +161,13 @@ baseline 1.443 d/w, mean max wave 8.0; fire_alt 1.339 d/w, 11.1 waves; NET
 +0.120 [+0.076, +0.164]. The console (16-17.5 waves with fire_alt) sits
 between the two levels, nearer one extra tick, as the 68 ms sum predicts;
 each extra tick costs ~40% of depth. So there is a console stand-in on the
-desk at 12-16 games in parallel (`--calibration LAB_ACT_FRAMES=8`). Fix on the hardware: shave ~40 ms (direct pad ~30 + a capture
+desk at 12-16 games in parallel (`--calibration LAB_ACT_FRAMES=8`). Capture settings on the
+same loopback: MJPG 1280x720 33.1 ms, **YUY2 1280x720 30.3 ms** (p90 36.7)
+against MJPG 1920x1080's 37.5 (p90 47.8); the PC fed 1080p so the card was
+downscaling, the console feeds 720p so nothing is scaled and the bot's
+per-tick INTER_AREA downscale goes too. Round 18 runs `--capture-fourcc
+YUY2 --capture-res 1280x720`; with the pad wiring (~30 ms) that is the ~40
+ms needed, at the edge, judged by the reversal count. Fix on the hardware: shave ~40 ms (direct pad ~30 + a capture
 setting worth a frame; 1280x720 / YUY2 measurements pending).
 
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**

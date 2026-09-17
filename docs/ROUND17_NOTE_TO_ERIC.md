@@ -131,6 +131,22 @@ The direct pad wiring is ~30 of it; the other capture settings (1280x720,
 YUY2) may be worth a frame, which is the remaining 10-17. Please run those
 two when you can; they decide whether the pad mod alone is enough.
 
+### The other two settings (Eric, same evening)
+
+| setting | hdmi − screen, median | p10 | p90 |
+|---|---:|---:|---:|
+| MJPG 1920x1080 (what every round so far used) | 37.5 ms | 30.4 | 47.8 |
+| MJPG 1280x720 | 33.1 ms | 27.0 | 41.1 |
+| **YUY2 1280x720** | **30.3 ms** | 23.4 | 36.7 |
+
+Not a whole frame, but 7 ms at the median and 11 ms at the slow end, and on
+the console it should be at least that: here the PC was feeding the card
+1080p, so the card was scaling down, while the console feeds it 720p, the
+model's own size, so nothing is scaled anywhere and the bot's per-tick
+downscale disappears too. Round 18 runs with these flags. Together with the
+pad wiring (~30 ms) that is the ~40 ms we need, right at the edge, so the
+reversal count in the round-18 trace is the number to watch.
+
 After that, taking the two adapters out of the loop (the same optoisolators
 wired directly across a wired Xbox 360 pad's D-pad and A/B/X/Y contacts)
 buys ~30 ms. Your call on the soldering; the reversal count on every run
@@ -157,12 +173,15 @@ play can be searched there instead of one ten-game round at a time.
 The capture tool is new, so this is a fresh download: GitHub page, green
 **Code** button, **Download ZIP** (`main`), extract into a fresh
 `C:\robotronai17`, rename the folder to `robotron_ai`, venv per the README.
-The capture test above first. Then, if one capture setting measured faster,
-ten games with that setting; otherwise the usual:
+The capture tests are done (above). Round 18 is ten games on the fastest
+setting they found, everything else unchanged:
 
 ```
-.venv\Scripts\python -m robotron_ai --mode hardware --device 0 --port COM3 --loop --games 10 --visualize --capture-backend dshow --capture-fourcc MJPG --capture-res 1920x1080
+.venv\Scripts\python -m robotron_ai --mode hardware --device 0 --port COM3 --loop --games 10 --visualize --capture-backend dshow --capture-fourcc YUY2 --capture-res 1280x720
 ```
+
+If the picture is black or the console output shows far fewer than 50 unique
+frames a second, fall back to `--capture-fourcc MJPG --capture-res 1280x720`.
 
 Send the hardware_report folder as usual; the first line of the analysis
 will say whether the delay moved.
