@@ -111,6 +111,26 @@ console's own input-to-picture pipeline, which nothing on our side can
 change. And if one capture setting is a frame faster than another, that is a
 free win we take immediately.
 
+### Result (Eric, same evening, MJPG 1920x1080)
+
+Screen read 4 ms median; card 41 ms median (p10 36, p90 52); difference
+**37.5 ms**, about two and a quarter 60 Hz frames: one frame of scan-out,
+one frame in the card or its driver, a few ms of MJPG decode. The card
+delivered a steady 60 frames a second. So the video side costs ~38 ms and
+the controller side ~30 ms, ~68 ms together, just over one decision tick,
+which is exactly what the reversal count shows (3 ticks in most cases, 4 in
+a quarter). The console's own pipeline is therefore no slower than the
+emulator's; the whole gap is the two paths we can touch. The MAME proxy
+agrees: run with one extra tick of actuation delay it reproduces the console
+almost exactly (baseline 13.0 waves against your round-14 12; fire
+alternation 19.4 against your rounds 15-16 at 16-17.5; deaths per wave 1.15
+against your 1.15). That gives us a console stand-in on the desk.
+
+To get the loop back to the emulator's 2 ticks we need to shave ~40 ms.
+The direct pad wiring is ~30 of it; the other capture settings (1280x720,
+YUY2) may be worth a frame, which is the remaining 10-17. Please run those
+two when you can; they decide whether the pad mod alone is enough.
+
 After that, taking the two adapters out of the loop (the same optoisolators
 wired directly across a wired Xbox 360 pad's D-pad and A/B/X/Y contacts)
 buys ~30 ms. Your call on the soldering; the reversal count on every run

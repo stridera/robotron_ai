@@ -142,10 +142,23 @@ asked for 1080p and upscales). Next test (free, a spare HDMI cable):
 full-screen window and times it through the card and through a screen read
 at once; the difference is the video side's cost over the emulator path,
 and it compares MJPG/YUY2 and 1080p/720p on the PC in minutes. The
-direct-pad wiring is second. Parallel lever on the desk: the MAME lab's
-`LAB_ACT_FRAMES` (standard calibration 4 = one tick late; July cost curve
-42 -> 18 -> 8 waves at 0/1/2 ticks) run at 8-12 as a console stand-in to
-search for latency-tolerant play at 16 games in parallel.
+direct-pad wiring is second.
+
+**Capture chain measured in isolation (Eric, Sept 16, GPU HDMI into the
+Magewell, `tools/measure_capture_latency.py`, MJPG 1920x1080, 40 flips):**
+screen read 4 ms, card 41 ms median (p10 36, p90 52), difference **37.5 ms**
+(~2.25 frames: scan-out, one frame in card/driver, decode); the card runs a
+steady 60 fps. Adapters ~30 + capture ~38 = ~68 ms, just over one tick,
+matching the reversal count (3 ticks in most cases, 4 in a quarter). The
+console's own pipeline is no slower than the emulator's. **The MAME proxy at
+one extra tick of actuation delay (`LAB_ACT_FRAMES=8`, 144/arm, Sept 16)
+reproduces the console:** baseline 1.281 d/w, mean max wave 13.0 (console
+round 14: 12); fire_alt 1.152 d/w, mean max wave 19.4 (console rounds 15-16:
+16-17.5; console fire_alt d/w 1.04-1.33 by band); NET +0.146 [+0.107,
++0.186] against +0.311 at the standard calibration, i.e. the console's
+smaller lift too. So there is a console stand-in on the desk at 12-16 games
+in parallel. Fix on the hardware: shave ~40 ms (direct pad ~30 + a capture
+setting worth a frame; 1280x720 / YUY2 measurements pending).
 
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while
