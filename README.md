@@ -293,7 +293,22 @@ path serial byte -> Arduino -> optoisolators -> adapters -> Windows controller
 state, with the adapter's USB output plugged into the PC instead of the
 console. The bot's reversal latency is end to end; subtracting this number
 from it leaves the render/output/capture side. A direct wired pad is under
-10 ms; anything above ~60 ms means the adapters carry the delay.
+10 ms; anything above ~60 ms means the adapters carry the delay. Measured on
+the operator's rig 2026-09-16: 19.5 or 39.5 ms, never between (the adapter
+chain polls at 50 Hz), so ~30 ms over a direct pad.
+
+### Measuring the capture chain by itself
+
+`python -m robotron_ai.tools.measure_capture_latency --list`, then
+`... --monitor N --device 0 --capture-backend dshow --capture-fourcc MJPG --capture-res 1920x1080`
+with a spare HDMI cable from the PC's video card into the capture card
+(Windows shows the card as monitor N). The tool flashes a full-screen window
+black/white on that monitor and times each flip two ways at once: through
+the card with the bot's own OpenCV flags, and through a screen read of the
+same monitor, which is where the emulator's window capture reads. The
+difference is what the console picture pays on the video side over the
+emulator path (scan-out, card, decode, driver buffering). Run it once per
+setting to compare formats and resolutions on the PC without a game.
 
 ### Decision trace and death windows (hardware, on by default)
 

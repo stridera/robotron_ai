@@ -73,20 +73,55 @@ differs from its PC mapping. Not a problem, just noted.)
 ## What I think the next step is
 
 Given that, the direct-pad wiring would recover about 30 ms and is now the
-second thing to try, not the first. The first is free: **set the Xbox 360's
-display output to 720p** (System settings, Console settings, Display, HDTV
-settings, 720p) and run with `--capture-res 1280x720`. The game renders at
-720p; at 1080p the console's hardware scaler is in the path and typically
-adds a frame, and the capture card then has 2.25x the pixels to move and we
-downscale them back. If the reversal count drops, that was it. It is also
-worth a look in the Magewell control panel for a low-latency or
-"frame vs field" setting; the default DirectShow path can buffer a frame.
+second thing to try, not the first. The first is another five-minute
+measurement, this time of the video side, and it needs only a spare HDMI
+cable. (Strider confirms the console already outputs 720p, so the console's
+scaler is not in the path; the card is asked for 1080p and upscales, and we
+scale back down. Whether that costs anything is exactly what this measures.)
 
+### Time the capture chain by itself
+
+1. Run an HDMI cable from the PC's video card straight into the capture
+   card, in place of the console. Windows will show the card as a second
+   monitor (extend, do not duplicate).
+2. Find its number, then run the test with the usual capture flags:
+
+```
+.venv\Scripts\python -m robotron_ai.tools.measure_capture_latency --list
+.venv\Scripts\python -m robotron_ai.tools.measure_capture_latency --monitor 2 --device 0 --capture-backend dshow --capture-fourcc MJPG --capture-res 1920x1080
+```
+
+It opens a full-screen window on that monitor, flips it black and white
+forty times, and reports how long each flip took to arrive two ways at once:
+through the card, with the bot's own capture settings, and through a direct
+read of the screen, which is what the emulator's window capture amounts to.
+The difference between the two is what the console picture pays on the
+video side over the emulator: scan-out, the card, the decode, and any driver
+buffering. Then run it two or three more times with different flags, since
+this is now a five-minute comparison instead of a ten-game session:
+
+```
+... --capture-fourcc MJPG --capture-res 1280x720
+... --capture-fourcc YUY2 --capture-res 1280x720
+```
+
+With the controller number from tonight (~30 ms) and this one, the console's
+extra 70-130 ms is fully accounted for: whatever is left over is the
+console's own input-to-picture pipeline, which nothing on our side can
+change. And if one capture setting is a frame faster than another, that is a
+free win we take immediately.
 
 After that, taking the two adapters out of the loop (the same optoisolators
 wired directly across a wired Xbox 360 pad's D-pad and A/B/X/Y contacts)
-buys the remaining ~30 ms. Your call on the soldering; the reversal count on
-every run will show whether each change moved the delay.
+buys ~30 ms. Your call on the soldering; the reversal count on every run
+will show whether each change moved the delay.
+
+Meanwhile on my side: the MAME lab can apply the bot's commands late on
+purpose (it already runs at one tick late as its standard calibration, and
+the July cost curve showed each extra tick roughly halves the depth: 42 ->
+18 -> 8 waves). Running it at the console's two-to-three ticks gives a
+console stand-in on the desk at 16 games in parallel, so latency-tolerant
+play can be searched there instead of one ten-game round at a time.
 
 ## What is different in this build
 
@@ -99,16 +134,18 @@ every run will show whether each change moved the delay.
 
 ## What to run
 
-Same as always: GitHub page, green **Code** button, **Download ZIP**
-(`main`, also tagged `round-17`), extract into a fresh `C:\robotronai17`,
-rename the folder to `robotron_ai`, venv per the README, then:
+The capture tool is new, so this is a fresh download: GitHub page, green
+**Code** button, **Download ZIP** (`main`), extract into a fresh
+`C:\robotronai17`, rename the folder to `robotron_ai`, venv per the README.
+The capture test above first. Then, if one capture setting measured faster,
+ten games with that setting; otherwise the usual:
 
 ```
 .venv\Scripts\python -m robotron_ai --mode hardware --device 0 --port COM3 --loop --games 10 --visualize --capture-backend dshow --capture-fourcc MJPG --capture-res 1920x1080
 ```
 
-If you build the direct-pad path, run exactly this and send the folder; the
-first line of the analysis will say whether the delay moved.
+Send the hardware_report folder as usual; the first line of the analysis
+will say whether the delay moved.
 
 ## Your notes
 

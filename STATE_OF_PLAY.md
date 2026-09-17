@@ -136,9 +136,16 @@ at ~19.5 or ~39.5 ms, never between, median 39 ms: the X-Arcade adapter chain
 polls at 50 Hz. Against a wired pad's 4-8 ms that is ~30 ms, about half a
 tick, so the adapters carry only the smaller part of the console's extra 1-2
 ticks; the larger part is the console's input-to-output pipeline plus the
-capture card's frame latency. Next test (free): console output set to 720p
-with `--capture-res 1280x720` to take the 360's hardware scaler and the
-1080p downscale out of the path; the direct-pad wiring is second.
+capture card's frame latency. The console already outputs 720p (the card is
+asked for 1080p and upscales). Next test (free, a spare HDMI cable):
+`tools/measure_capture_latency.py`, GPU HDMI into the card, flashes a
+full-screen window and times it through the card and through a screen read
+at once; the difference is the video side's cost over the emulator path,
+and it compares MJPG/YUY2 and 1080p/720p on the PC in minutes. The
+direct-pad wiring is second. Parallel lever on the desk: the MAME lab's
+`LAB_ACT_FRAMES` (standard calibration 4 = one tick late; July cost curve
+42 -> 18 -> 8 waves at 0/1/2 ticks) run at 8-12 as a console stand-in to
+search for latency-tolerant play at 16 games in parallel.
 
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while
