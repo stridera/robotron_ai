@@ -56,19 +56,37 @@ reads 10-20 ms, the delay is in the console's video output or the capture
 card, and no controller change will help. Either way it settles the question
 in five minutes, before anyone picks up a soldering iron.
 
+### Result (Eric ran it the same evening)
+
+Press and release both land at either ~19.5 ms or ~39.5 ms, nothing in
+between, median 39 ms over 39 trials. That is an adapter chain polling at
+50 Hz: a press is picked up at the next 20 ms poll or the one after. So the
+controller side costs about 30 ms more than a direct pad would (a wired 360
+pad reports every 4-8 ms). Real, but only about half a tick of the extra one
+to two ticks. **The larger part of the delay is on the video side**: the
+console's own input-to-output pipeline plus the capture card's frame latency,
+which the emulator's window capture does not pay. (One curiosity for later:
+on the PC the adapter reported our "A" line as the X button; on the console
+the bot's fire directions clearly work, so the adapter's console mapping
+differs from its PC mapping. Not a problem, just noted.)
+
 ## What I think the next step is
 
-The way to find out, and most likely the fix, is to take the two adapters out
-of the loop: the same optoisolators, wired directly across a wired Xbox 360
-pad's D-pad and A/B/X/Y contacts. A wired pad reports at 4-8 ms. If the
-reversal count in the next trace drops from 3 to 2, that was the delay, and
-the console should start playing like the emulator, which reached waves 117
-and 198 this week. If it stays at 3, the delay is in the console's own video
-output and we tune the bot around it instead.
+Given that, the direct-pad wiring would recover about 30 ms and is now the
+second thing to try, not the first. The first is free: **set the Xbox 360's
+display output to 720p** (System settings, Console settings, Display, HDTV
+settings, 720p) and run with `--capture-res 1280x720`. The game renders at
+720p; at 1080p the console's hardware scaler is in the path and typically
+adds a frame, and the capture card then has 2.25x the pixels to move and we
+downscale them back. If the reversal count drops, that was it. It is also
+worth a look in the Magewell control panel for a low-latency or
+"frame vs field" setting; the default DirectShow path can buffer a frame.
 
-I know that is a soldering job and your call. If you would rather test before
-building, the reversal count is measured on every run, so a single game on any
-alternative control path (even a different adapter) would answer it.
+
+After that, taking the two adapters out of the loop (the same optoisolators
+wired directly across a wired Xbox 360 pad's D-pad and A/B/X/Y contacts)
+buys the remaining ~30 ms. Your call on the soldering; the reversal count on
+every run will show whether each change moved the delay.
 
 ## What is different in this build
 

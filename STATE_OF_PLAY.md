@@ -130,6 +130,16 @@ last life drops no icon, so every game was one death short), and proposes the
 hardware test: optoisolators directly on a wired 360 pad's D-pad and A/B/X/Y
 contacts, judged by the reversal count in the next trace.
 
+**Controller chain measured in isolation (Eric, Sept 16, adapter USB into the
+PC, `tools/measure_control_latency.py`, 39 trials):** press and release land
+at ~19.5 or ~39.5 ms, never between, median 39 ms: the X-Arcade adapter chain
+polls at 50 Hz. Against a wired pad's 4-8 ms that is ~30 ms, about half a
+tick, so the adapters carry only the smaller part of the console's extra 1-2
+ticks; the larger part is the console's input-to-output pipeline plus the
+capture card's frame latency. Next test (free): console output set to 720p
+with `--capture-res 1280x720` to take the 360's hardware scaler and the
+1080p downscale out of the path; the direct-pad wiring is second.
+
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while
 the emulator went from a W13.5 mean to ~W30 with the same code. Per wave,
