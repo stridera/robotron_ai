@@ -161,13 +161,22 @@ baseline 1.443 d/w, mean max wave 8.0; fire_alt 1.339 d/w, 11.1 waves; NET
 +0.120 [+0.076, +0.164]. The console (16-17.5 waves with fire_alt) sits
 between the two levels, nearer one extra tick, as the 68 ms sum predicts;
 each extra tick costs ~40% of depth. So there is a console stand-in on the
-desk at 12-16 games in parallel (`--calibration LAB_ACT_FRAMES=8`). Capture settings on the
-same loopback: MJPG 1280x720 33.1 ms, **YUY2 1280x720 30.3 ms** (p90 36.7)
-against MJPG 1920x1080's 37.5 (p90 47.8); the PC fed 1080p so the card was
-downscaling, the console feeds 720p so nothing is scaled and the bot's
-per-tick INTER_AREA downscale goes too. Round 18 runs `--capture-fourcc
-YUY2 --capture-res 1280x720`; with the pad wiring (~30 ms) that is the ~40
-ms needed, at the edge, judged by the reversal count. Fix on the hardware: shave ~40 ms (direct pad ~30 + a capture
+desk at 12-16 games in parallel (`--calibration LAB_ACT_FRAMES=8`). Capture settings on the same
+loopback: MJPG 1280x720 33.1 ms and YUY2 1280x720 30.3 ms against MJPG
+1920x1080's 37.5. **Both rejected the same night:** the loopback measures
+latency only, and a flashing square cannot see repeated frames. The capture
+probe (unique frames/s, top 12 of 36 combinations) has dshow MJPG 1920x1080
+at 50.0 unique/s, default 1280x720 at 22.2, YUY2 1920x1080 at 15.3 and YUY2
+1280x720 30fps at 9.3, with MJPG 720p and YUY2 720p-default below the cut.
+Mean frame age is ~1/(2*unique): 10 ms at 50/s against 22-54 ms at 720p, so
+the 4-7 ms latency win costs 12-44 ms of staleness and, below 15 unique/s,
+whole decision ticks. Capture stays MJPG 1920x1080. (Also: the card printed
+the same pixel-format string in all three loopback runs, as in round 16, so
+the YUY2 request likely never took effect; only the resolution changed.)
+The real 30 ms is the pad: since 2026-09-18 the Uno and optos are soldered
+straight onto a wired VOYEE 360 pad, bench-verified 9 ms vs 39 ms
+([[project-direct-wired-360-pad]]). Round 18 = pad only, capture unchanged,
+judged by the reversal count. Fix on the hardware: shave ~40 ms (direct pad ~30 + a capture
 setting worth a frame; 1280x720 / YUY2 measurements pending).
 
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**

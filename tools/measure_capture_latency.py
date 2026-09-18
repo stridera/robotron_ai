@@ -24,6 +24,13 @@ input-to-output pipeline is not in this measurement.
 
 Run it once per capture setting you want to compare (1920x1080 vs 1280x720,
 MJPG vs YUY2). Only numpy, OpenCV and the standard library are needed.
+
+HALF THE STORY. This measures latency, not freshness: between flips the
+picture is static, so a repeated frame is indistinguishable from a new one.
+A mode can be lower-latency and much staler at the same time, and staleness
+is the larger term (mean frame age adds ~1/(2*unique_hz): 10 ms at 50 unique
+frames/s, 54 ms at 9). Never adopt a setting on this number alone; confirm
+the unique-frame rate with `--mode hardware --probe-capture` first.
 """
 import argparse
 import collections
@@ -351,6 +358,12 @@ def report(results, probes):
         print("  reads. So this difference is what the console picture pays over the emulator")
         print("  path on the video side: scan-out, the card, the format decode and any driver")
         print("  buffering. One 60 Hz frame is 16.7 ms; one decision tick is ~60 ms.")
+        print("  NOT MEASURED HERE: how often a NEW frame arrives. The picture is static")
+        print("  between flips, so a repeated frame looks the same as a fresh one. A mode")
+        print("  can be lower-latency and much staler at once (this card: MJPG 1080p is")
+        print("  4 ms slower than 720p but sends 50 unique frames/s against under 10).")
+        print("  Mean frame age adds ~1/(2*unique_hz). Always check a setting with")
+        print("  `--mode hardware --probe-capture` before adopting it.")
     return rep
 
 

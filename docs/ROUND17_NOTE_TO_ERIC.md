@@ -139,18 +139,39 @@ two when you can; they decide whether the pad mod alone is enough.
 | MJPG 1280x720 | 33.1 ms | 27.0 | 41.1 |
 | **YUY2 1280x720** | **30.3 ms** | 23.4 | 36.7 |
 
-Not a whole frame, but 7 ms at the median and 11 ms at the slow end, and on
-the console it should be at least that: here the PC was feeding the card
-1080p, so the card was scaling down, while the console feeds it 720p, the
-model's own size, so nothing is scaled anywhere and the bot's per-tick
-downscale disappears too. Round 18 runs with these flags. Together with the
-pad wiring (~30 ms) that is the ~40 ms we need, right at the edge, so the
-reversal count in the round-18 trace is the number to watch.
+**Withdrawn the same night.** Latency is only half of frame age; the other
+half is how often a *new* frame arrives, and a flashing white square cannot
+measure that (it looks identical whether the card sends a fresh frame or
+repeats one). The capture probe measured exactly that months ago, and its
+table rules 720p out:
 
-After that, taking the two adapters out of the loop (the same optoisolators
-wired directly across a wired Xbox 360 pad's D-pad and A/B/X/Y contacts)
-buys ~30 ms. Your call on the soldering; the reversal count on every run
-will show whether each change moved the delay.
+| setting | unique frames/s | delivered/s |
+|---|---:|---:|
+| **dshow MJPG 1920x1080** | **50.0** | 59.6 |
+| dshow default 1920x1080 | 45.3 | 59.6 |
+| dshow default 1280x720 | 22.2 | 59.8 |
+| dshow YUY2 1920x1080 | 15.3 | 59.6 |
+| dshow YUY2 1280x720, 30 fps | 9.3 | 29.9 |
+
+The probe prints only its top 12 of 36 combinations, and MJPG 1280x720 and
+YUY2 1280x720 at the default rate are not among them: both are below 9.3
+unique frames a second. The card sends 60 frames a second in every mode, but
+at 720p most of them repeat. Average frame age is about half the gap between
+new frames, so 50 a second costs 10 ms while 9 a second costs 54 ms. Trading
+4-7 ms of pipeline delay for 12-44 ms of staleness is a large loss, and at
+9 unique frames a second the bot would not even get a new picture every
+decision. **Round 18 keeps MJPG 1920x1080.**
+
+One more caveat on those three runs: the card reported the same pixel-format
+string in all three, as it did in round 16, so the YUY2 request probably
+never took effect. What actually changed was the resolution, and 30.3 vs
+33.1 ms is within the run-to-run spread. Read it as "720p is ~4 ms faster
+and much staler", not as a format result.
+
+That leaves the pad wiring as the whole fix, and it is built: the Uno and
+optoisolators now go straight onto a wired VOYEE 360 pad, bench-verified at
+**9 ms** press-to-report against 39 ms through the two X-Arcade adapters.
+That is the ~30 ms, and it is the only change in round 18.
 
 Meanwhile on my side: the MAME lab can apply the bot's commands late on
 purpose (it already runs at one tick late as its standard calibration, and
@@ -173,15 +194,17 @@ play can be searched there instead of one ten-game round at a time.
 The capture tool is new, so this is a fresh download: GitHub page, green
 **Code** button, **Download ZIP** (`main`), extract into a fresh
 `C:\robotronai17`, rename the folder to `robotron_ai`, venv per the README.
-The capture tests are done (above). Round 18 is ten games on the fastest
-setting they found, everything else unchanged:
+The capture tests are done (above) and they change nothing: the capture flags
+stay exactly as they have been for every round. Round 18 is ten games with
+the direct-wired pad in place of the two adapters, and that is the only
+change:
 
 ```
-.venv\Scripts\python -m robotron_ai --mode hardware --device 0 --port COM3 --loop --games 10 --visualize --capture-backend dshow --capture-fourcc YUY2 --capture-res 1280x720
+.venv\Scripts\python -m robotron_ai --mode hardware --device 0 --port COM3 --loop --games 10 --visualize --capture-backend dshow --capture-fourcc MJPG --capture-res 1920x1080
 ```
 
-If the picture is black or the console output shows far fewer than 50 unique
-frames a second, fall back to `--capture-fourcc MJPG --capture-res 1280x720`.
+One change at a time, so the reversal count on the first line of the
+analysis attributes cleanly to the pad.
 
 Send the hardware_report folder as usual; the first line of the analysis
 will say whether the delay moved.

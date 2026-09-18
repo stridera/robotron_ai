@@ -307,8 +307,18 @@ black/white on that monitor and times each flip two ways at once: through
 the card with the bot's own OpenCV flags, and through a screen read of the
 same monitor, which is where the emulator's window capture reads. The
 difference is what the console picture pays on the video side over the
-emulator path (scan-out, card, decode, driver buffering). Run it once per
-setting to compare formats and resolutions on the PC without a game.
+emulator path (scan-out, card, decode, driver buffering). Measured on the
+operator's rig 2026-09-16 at MJPG 1920x1080: 37.5 ms, about 2.25 frames.
+
+This is only half of frame age, so **never pick a capture setting from it
+alone.** The other half is how often a new frame arrives, which a flashing
+square cannot see: between flips the picture is static, so a repeated frame
+looks like a fresh one. Mean age adds about `1/(2*unique_hz)` on top of the
+latency, which is 10 ms at 50 unique frames/s and 54 ms at 9. On this card
+the 720p modes measured 4-7 ms lower latency here and far worse on
+`--probe-capture` (50.0 unique/s at MJPG 1080p against 22.2 and below at
+720p), so they lose on total age. Use this tool to compare the pipeline, and
+`--probe-capture` to decide.
 
 ### Decision trace and death windows (hardware, on by default)
 
