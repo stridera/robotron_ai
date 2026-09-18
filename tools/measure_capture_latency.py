@@ -300,8 +300,42 @@ class HdmiProbe(Probe):
 
 # ── monitors and the flashing / animating window ────────────────────────────
 
+class POINTL(ctypes.Structure):
+    _fields_ = [("x", wt.LONG), ("y", wt.LONG)]
+
+
+class DEVMODEW(ctypes.Structure):
+    _fields_ = [("dmDeviceName", wt.WCHAR * 32), ("dmSpecVersion", wt.WORD),
+                ("dmDriverVersion", wt.WORD), ("dmSize", wt.WORD), ("dmDriverExtra", wt.WORD),
+                ("dmFields", wt.DWORD), ("dmPosition", POINTL),
+                ("dmDisplayOrientation", wt.DWORD), ("dmDisplayFixedOutput", wt.DWORD),
+                ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short),
+                ("dmYResolution", ctypes.c_short), ("dmTTOption", ctypes.c_short),
+                ("dmCollate", ctypes.c_short), ("dmFormName", wt.WCHAR * 32),
+                ("dmLogPixels", wt.WORD), ("dmBitsPerPel", wt.DWORD),
+                ("dmPelsWidth", wt.DWORD), ("dmPelsHeight", wt.DWORD),
+                ("dmDisplayFlags", wt.DWORD), ("dmDisplayFrequency", wt.DWORD),
+                ("dmICMMethod", wt.DWORD), ("dmICMIntent", wt.DWORD),
+                ("dmMediaType", wt.DWORD), ("dmDitherType", wt.DWORD),
+                ("dmReserved1", wt.DWORD), ("dmReserved2", wt.DWORD),
+                ("dmPanningWidth", wt.DWORD), ("dmPanningHeight", wt.DWORD)]
+
+
+def refresh_hz(device_name):
+    """The monitor's current refresh rate, which is the hard ceiling on how
+    many distinct pictures the HDMI link can carry per second. 0 if unknown."""
+    u = ctypes.windll.user32
+    u.EnumDisplaySettingsW.restype = wt.BOOL
+    u.EnumDisplaySettingsW.argtypes = [wt.LPCWSTR, wt.DWORD, ctypes.POINTER(DEVMODEW)]
+    dm = DEVMODEW()
+    dm.dmSize = ctypes.sizeof(DEVMODEW)
+    if not u.EnumDisplaySettingsW(device_name, 0xFFFFFFFF, ctypes.byref(dm)):
+        return 0
+    return int(dm.dmDisplayFrequency)
+
+
 def list_monitors():
-    """[(x, y, w, h, name, primary)] in physical pixels."""
+    """[(x, y, w, h, name, primary, refresh_hz)] in physical pixels."""
     user32 = ctypes.windll.user32
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -321,7 +355,7 @@ def list_monitors():
         user32.GetMonitorInfoW(hmon, ctypes.byref(mi))
         r = mi.rcMonitor
         out.append((r.left, r.top, r.right - r.left, r.bottom - r.top, mi.szDevice,
-                    bool(mi.dwFlags & 1)))
+                    bool(mi.dwFlags & 1), refresh_hz(mi.szDevice)))
         return True
 
     user32.EnumDisplayMonitors(None, None, PROC(cb), 0)
@@ -330,7 +364,9 @@ def list_monitors():
 
 def describe_monitors(mons):
     for i, m in enumerate(mons, 1):
-        print(f"monitor {i}: {m[4]} {m[2]}x{m[3]} at ({m[0]},{m[1]}){' primary' if m[5] else ''}")
+        hz = f" {m[6]} Hz" if len(m) > 6 and m[6] else ""
+        print(f"monitor {i}: {m[4]} {m[2]}x{m[3]}{hz} at ({m[0]},{m[1]})"
+              f"{' primary' if m[5] else ''}")
 
 
 # Twelve saturated hues of roughly even brightness. Even brightness keeps the
@@ -487,7 +523,7 @@ def calibrate(flasher, probes):
     return levels
 
 
-def run(mon, probes, trials, min_gap, max_gap, anim_seconds, anim_fps):
+def run(mon, probes, trials, min_gap, max_gap, anim_seconds, anim_fps, link_hz=0):
     flasher = Flasher(mon)
     for p in probes:
         p.start()
@@ -531,10 +567,10 @@ def run(mon, probes, trials, min_gap, max_gap, anim_seconds, anim_fps):
         for p in probes:
             p.stop()
         flasher.close()
-    return report(results, probes, freshness, painted)
+    return report(results, probes, freshness, painted, link_hz)
 
 
-def report(results, probes, freshness=None, painted=0):
+def report(results, probes, freshness=None, painted=0, link_hz=0):
     rep = {}
     print()
     print("LATENCY (how long a change takes to arrive)")
@@ -556,22 +592,27 @@ def report(results, probes, freshness=None, painted=0):
     if freshness:
         rep["freshness"] = dict(freshness)
         rep["freshness"]["painted_frames"] = painted
+        rep["freshness"]["link_hz"] = link_hz
         print()
         print("FRESHNESS (how often a genuinely new frame arrives)")
+        if link_hz:
+            print(f"  the monitor runs at {link_hz} Hz, so the HDMI link cannot carry more")
+            print(f"  than {link_hz} distinct pictures a second; the PC painted {painted} frames")
         for p in probes:
             f = freshness.get(p.name)
             if not f:
                 continue
-            what = ("what the PC painted, i.e. the source rate"
+            what = ("what reached the desktop, i.e. the source"
                     if p.name == "screen" else "what the card delivered")
             print(f"  {p.name:7s}: {f['unique_hz']:5.1f} unique/s  "
                   f"({f['unique']} of {f['samples']} samples in {f['seconds']} s, "
                   f"sampled at {f['sampled_hz']}/s) - {what}")
         src, card = freshness.get("screen"), freshness.get("hdmi")
         if src and card:
-            kept = kept_fraction(src["unique_hz"], card["unique_hz"])
+            ceiling = min(src["unique_hz"], link_hz) if link_hz else src["unique_hz"]
+            kept = kept_fraction(ceiling, card["unique_hz"])
             rep["freshness"]["kept_fraction"] = None if kept is None else round(kept, 3)
-            print(f"  card kept {kept * 100:.0f}% of the source's new frames"
+            print(f"  card kept {kept * 100:.0f}% of the {ceiling:.0f}/s the source offered"
                   if kept is not None else "  source produced nothing to keep")
             print("    Below ~90% the card or its driver is repeating frames; at ~100% any")
             print("    duplicates seen in a game come from the game, not the capture path.")
@@ -579,9 +620,15 @@ def report(results, probes, freshness=None, painted=0):
                   f" (1/(2*unique_hz)) on top of the latency above.")
             print("    The bot decides ~15 times a second and needs 15+ unique/s to see a")
             print("    new picture every tick; 30+ leaves margin.")
-        if src and src["sampled_hz"] < 120:
-            print(f"    NOTE: the screen probe only sampled {src['sampled_hz']}/s, which is")
-            print("    close to the paint rate, so the source figure may be understated.")
+        if src:
+            if src["sampled_hz"] < 2.0 * max(link_hz, 1):
+                print(f"    NOTE: the screen probe sampled {src['sampled_hz']}/s against a")
+                print(f"    {link_hz} Hz link, too little margin to resolve every frame; read")
+                print("    the source figure as a floor.")
+            elif link_hz and src["unique_hz"] > link_hz * 1.02:
+                print(f"    NOTE: the source figure exceeds {link_hz} Hz because a desktop read")
+                print("    can catch a half-finished repaint. The link rate is the real")
+                print("    ceiling; this only confirms the source was saturating it.")
     return rep
 
 
@@ -600,7 +647,8 @@ def main(argv=None):
     ap.add_argument("--gap", default="0.4,0.8", help="random seconds between flips, min,max")
     ap.add_argument("--anim-seconds", type=float, default=10.0,
                     help="seconds of moving shapes for the freshness count (0 to skip)")
-    ap.add_argument("--anim-fps", type=int, default=60, help="target paint rate for the shapes")
+    ap.add_argument("--anim-fps", type=int, default=0,
+                    help="target paint rate for the shapes (default: the monitor's refresh rate)")
     a = ap.parse_args(argv)
 
     mons = list_monitors()
@@ -614,7 +662,10 @@ def main(argv=None):
             sys.exit("pass --monitor N (the one the capture card shows up as)")
         a.monitor = cands[0]
     mon = mons[a.monitor - 1]
-    print(f"flashing monitor {a.monitor}: {mon[4]} {mon[2]}x{mon[3]} at ({mon[0]},{mon[1]})")
+    link_hz = mon[6] if len(mon) > 6 else 0
+    anim_fps = a.anim_fps or link_hz or 60
+    print(f"flashing monitor {a.monitor}: {mon[4]} {mon[2]}x{mon[3]}"
+          f"{f' {link_hz} Hz' if link_hz else ''} at ({mon[0]},{mon[1]})")
 
     probes = []
     if not a.no_screen:
@@ -627,7 +678,7 @@ def main(argv=None):
     if not probes:
         sys.exit("nothing to measure")
     lo, hi = (float(v) for v in a.gap.split(","))
-    return run(mon, probes, a.trials, lo, hi, a.anim_seconds, a.anim_fps)
+    return run(mon, probes, a.trials, lo, hi, a.anim_seconds, anim_fps, link_hz)
 
 
 if __name__ == "__main__":

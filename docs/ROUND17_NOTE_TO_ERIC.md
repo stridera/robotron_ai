@@ -173,6 +173,22 @@ optoisolators now go straight onto a wired VOYEE 360 pad, bench-verified at
 **9 ms** press-to-report against 39 ms through the two X-Arcade adapters.
 That is the ~30 ms, and it is the only change in round 18.
 
+### The capture tool now measures both halves
+
+Rather than take the old probe's word for it, `measure_capture_latency` has
+been extended: after the flips it animates moving shapes with a colour-cycling
+block at the centre, painted at the monitor's refresh rate, and counts the
+frames that actually changed down both paths at once. The screen read shows
+what the PC put out and the card's count shows what survived, so it separates
+"the card repeated a frame" from "the source never made one". Its change test
+now reduces both paths to a fixed-size patch, so 720p is no longer penalised
+for having fewer pixels the way the old probe's fixed grid was.
+
+So if we want to revisit 720p, the loopback run answers it in five minutes
+rather than a ten-game session, and no YouTube clip is needed: the tool is its
+own source and reports the paint rate it achieved. Worth doing at some point,
+but it is not on the round-18 path.
+
 Meanwhile on my side: the MAME lab can apply the bot's commands late on
 purpose (it already runs at one tick late as its standard calibration, and
 the July cost curve showed each extra tick roughly halves the depth: 42 ->

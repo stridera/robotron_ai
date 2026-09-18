@@ -316,9 +316,11 @@ buffering. Measured on the operator's rig 2026-09-16 at MJPG 1920x1080:
 
 **Freshness.** The window then animates moving shapes with a large centred
 beacon that takes the next of twelve colours on every painted frame, and both
-paths count frames that actually changed. The screen read is the source rate,
-so the card can never beat it, and the ratio says whether the card is
-repeating frames or the source never produced one. Mean frame age adds about
+paths count frames that actually changed. The shapes are painted at the
+monitor's own refresh rate, which is printed and is the hard ceiling on how
+many distinct pictures the HDMI link can carry. The screen read establishes
+that the source really was saturating that ceiling, and the ratio then says
+whether the card is repeating frames or the source never produced one. Mean frame age adds about
 `1/(2*unique_hz)` on top of the latency, which is 10 ms at 50 unique frames/s
 and 54 ms at 9, so a mode can be lower-latency and much staler at once.
 Always read the two together.
