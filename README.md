@@ -331,6 +331,24 @@ test, so the comparison does not depend on capture resolution. `--probe-capture`
 points at 1080p and only 64 at 720p, so its cross-resolution ranking
 understates 720p by roughly that factor.
 
+**Reading a run that happened on someone else's machine.** Both measurement
+tools print an environment block first and the capture tool also writes
+`capture_report_<stamp>.json`; send the console output and that file together.
+Between them they carry everything needed to tell a real result from a broken
+setup:
+
+| printed | why it decides whether the numbers mean anything |
+|---|---|
+| monitor mode: size, **refresh rate**, bit depth | the refresh rate is the ceiling on distinct pictures a second, so it sets what "60 unique/s" can even mean |
+| adapter and **monitor name from the EDID** | a capture card names itself here, so it confirms `--monitor` points at the card and not at a desk display |
+| DPI awareness | if this is not per-monitor, a full-screen window on a scaled display silently fails to cover the monitor |
+| **desktop locked** | a locked or secure desktop shows no window and freezes every screen read; the whole run is void and it is not otherwise obvious |
+| window asked-for vs actual rect | the direct check that the probes are looking at the test pattern |
+| capture **requested vs reported** size and format | the card can refuse a size; and the reported format is a DirectShow *converted* buffer (`RGB24`, `0xe436eb7d`), so it cannot confirm a `--capture-fourcc` request took effect |
+| frames painted vs target, and the achieved rate | if the animation could not keep up, the source was the limit and the card's figure means nothing |
+| black/white calibration levels | a black that is not near 0 or a white not near 255 means the probe is seeing something other than the window |
+| every per-flip number | so a bimodal spread, which reveals a polling interval, is visible rather than hidden behind a median |
+
 ### Decision trace and death windows (hardware, on by default)
 
 Fourteen hardware rounds sent back only `report.json` and a few screenshots.

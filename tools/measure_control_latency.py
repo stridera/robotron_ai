@@ -17,6 +17,8 @@ No dependencies beyond pyserial and the Windows APIs.
 import argparse
 import ctypes
 import ctypes.wintypes as wt
+import datetime
+import platform
 import statistics
 import sys
 import time
@@ -39,14 +41,34 @@ class XINPUT_STATE(ctypes.Structure):
     _fields_ = [("dwPacketNumber", wt.DWORD), ("Gamepad", XINPUT_GAMEPAD)]
 
 
+def print_environment(port, baud, trials, button, interval):
+    """This runs on someone else's machine and only its output comes back, so
+    everything needed to interpret a number has to be printed with it."""
+    print("=== environment ===")
+    print(f"  when    : {datetime.datetime.now().astimezone().isoformat(timespec='seconds')}")
+    print(f"  os      : {platform.system()} {platform.release()} {platform.version()}")
+    print(f"  python  : {sys.version.split()[0]}")
+    try:
+        import serial
+        print(f"  pyserial: {serial.__version__}")
+    except Exception as e:
+        print(f"  pyserial: unavailable ({e})")
+    print(f"  serial  : port {port} at {baud} baud, {trials} trials of button {button} "
+          f"({interval}s apart)")
+    print("  the serial byte is one bit per pin, order [Y, X, B, A, LEFT, RIGHT, UP, DOWN];")
+    print("  0 releases everything (arduino/serial_pin_monitor.ino)")
+
+
 class XInputReader:
     """Reads one XInput pad. Returns (buttons, lx, ly) or None if absent."""
     def __init__(self, index=0):
         self.index = index
         self.dll = None
+        self.dll_name = None
         for name in ("xinput1_4", "xinput1_3", "xinput9_1_0"):
             try:
                 self.dll = ctypes.WinDLL(name)
+                self.dll_name = name
                 break
             except OSError:
                 continue
@@ -171,6 +193,18 @@ def run(port, baud, trials, interval, button, reader):
     print(f"  what changed on the pad: {rep['changed'] or 'nothing recognised'}")
     print("  (the bot's end-to-end reversal latency on the console is ~200-270 ms;"
           " the remainder after this number is the render/output/capture side)")
+    if rep["changed"] and button not in rep["changed"]:
+        print(f"  NOTE: we drove the {button} line but the pad reported "
+              f"{', '.join(rep['changed'])}. The adapter maps the lines differently on PC")
+        print("  than on the console; this measures the timing all the same.")
+    press = rep["press"]
+    if press.get("n", 0) >= 4 and press.get("p90_ms") and press.get("p10_ms"):
+        step = press["p90_ms"] - press["p10_ms"]
+        if step > 8.0:
+            print(f"  the spread runs {press['p10_ms']}-{press['p90_ms']} ms. If the values sit")
+            print(f"  at two or three levels about {step:.0f} ms apart rather than scattered,")
+            print("  that is a polling interval in the chain, not jitter: the device samples")
+            print(f"  its inputs every ~{step:.0f} ms and a press waits for the next sample.")
     return rep
 
 
@@ -184,20 +218,21 @@ def main(argv=None):
     ap.add_argument("--api", default="auto", choices=["auto", "xinput", "joy"])
     ap.add_argument("--index", type=int, default=0, help="controller index")
     a = ap.parse_args(argv)
+    print_environment(a.port, a.baud, a.trials, a.button, a.interval)
     reader = None
     if a.api in ("auto", "xinput"):
         try:
             r = XInputReader(a.index)
             if r.read() is not None:
                 reader = r
-                print(f"reading XInput controller {a.index}")
+                print(f"  reader  : XInput controller {a.index} via {r.dll_name}.dll")
         except OSError:
             pass
     if reader is None and a.api in ("auto", "joy"):
         r = JoyReader(a.index)
         if r.read() is not None:
             reader = r
-            print(f"reading legacy joystick {a.index}")
+            print(f"  reader  : legacy winmm joystick {a.index} (no XInput pad found)")
     if reader is None:
         sys.exit("no controller visible to Windows. Plug the X-Arcade Xbox 360 "
                  "adapter's USB output into this PC (not the console) and check "

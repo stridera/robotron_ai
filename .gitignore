@@ -20,3 +20,6 @@ snapshots/
 # the tool runs out of the box. It's a large binary; consider git-lfs if the repo
 # is pushed somewhere with a strict per-file size limit.
 logs/
+
+# Diagnostic reports written by the measurement tools
+capture_report_*.json

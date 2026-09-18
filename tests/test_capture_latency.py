@@ -108,6 +108,44 @@ class FreshnessPartsTest(unittest.TestCase):
         self.assertIsNone(mcap.kept_fraction(0.0, 30.0))
 
 
+class DiagnosticsTest(unittest.TestCase):
+    """The tool runs on someone else's machine and all that comes back is its
+    output, so the things needed to interpret a run must be in it."""
+
+    def test_fourcc_label_decodes_a_real_four_cc(self):
+        mjpg = int.from_bytes(b"MJPG", "little")
+        self.assertIn("MJPG", mcap.fourcc_label(mjpg))
+        self.assertTrue(mcap.fourcc_confirms_request(mjpg))
+
+    def test_fourcc_label_flags_the_directshow_converted_output(self):
+        """0xe436eb7d is MEDIASUBTYPE_RGB24: what OpenCV converts to, not what
+        the card negotiated. Reading it as a format confirmation is how the
+        round-16 YUY2 session looked like a real format test when it may not
+        have been one."""
+        label = mcap.fourcc_label(0xE436EB7D)
+        self.assertIn("RGB24", label)
+        self.assertIn("CANNOT confirm", label)
+        self.assertFalse(mcap.fourcc_confirms_request(0xE436EB7D))
+
+    def test_fourcc_label_never_raises_on_junk(self):
+        for v in (0, -1, 0xFFFFFFFF, 1):
+            self.assertIsInstance(mcap.fourcc_label(v), str)
+
+    def test_environment_carries_what_a_remote_run_needs(self):
+        env = mcap.environment()
+        for key in ("when", "python", "os", "opencv", "numpy",
+                    "dpi_awareness", "desktop_locked", "monitors"):
+            self.assertIn(key, env)
+        self.assertTrue(env["monitors"])
+        for m in env["monitors"]:
+            for key in ("device", "width", "height", "refresh_hz", "primary"):
+                self.assertIn(key, m)
+
+    def test_environment_is_json_serialisable(self):
+        import json
+        json.loads(json.dumps(mcap.environment(), default=str))
+
+
 class ShapeAnimationTest(unittest.TestCase):
     def test_shapes_fit_inside_the_frame(self):
         for s in mcap.make_shapes(1920, 1080):

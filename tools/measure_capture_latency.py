@@ -49,7 +49,10 @@ import argparse
 import collections
 import ctypes
 import ctypes.wintypes as wt
+import datetime
+import json
 import math
+import platform
 import random
 import statistics
 import sys
@@ -111,6 +114,36 @@ def centre_rect(w, h, frac):
     """Centred sub-rectangle covering `frac` of each dimension."""
     cw, ch = max(1, int(w * frac)), max(1, int(h * frac))
     return ((w - cw) // 2, (h - ch) // 2, (w - cw) // 2 + cw, (h - ch) // 2 + ch)
+
+
+# DirectShow hands OpenCV a CONVERTED buffer and reports the GUID of that
+# conversion, not the format negotiated with the card. These are the first
+# four bytes of the MEDIASUBTYPE_* GUIDs we see in practice.
+DSHOW_SUBTYPES = {0xE436EB7A: "RGB8", 0xE436EB7B: "RGB565", 0xE436EB7C: "RGB555",
+                  0xE436EB7D: "RGB24", 0xE436EB7E: "RGB32"}
+
+
+def fourcc_label(v):
+    """Human label for a CAP_PROP_FOURCC value, plus whether it can confirm
+    the requested capture format."""
+    v = int(v) & 0xFFFFFFFF
+    if v in DSHOW_SUBTYPES:
+        return (f"{DSHOW_SUBTYPES[v]} (0x{v:08x}) - a DirectShow CONVERTED output, so it "
+                f"CANNOT confirm which format the card negotiated")
+    chars = "".join(chr((v >> (8 * i)) & 0xFF) for i in range(4))
+    if all(32 <= ord(c) < 127 for c in chars):
+        return f"{chars.strip()} (0x{v:08x})"
+    return f"unprintable (0x{v:08x})"
+
+
+def fourcc_confirms_request(v):
+    """True when the reported format is a real 4CC we can compare against the
+    one we asked for."""
+    v = int(v) & 0xFFFFFFFF
+    if v in DSHOW_SUBTYPES:
+        return False
+    chars = "".join(chr((v >> (8 * i)) & 0xFF) for i in range(4))
+    return all(32 <= ord(c) < 127 for c in chars) and bool(chars.strip())
 
 
 def kept_fraction(source_unique_hz, card_unique_hz):
@@ -273,10 +306,43 @@ class HdmiProbe(Probe):
         if not self.cap.isOpened():
             sys.exit(f"capture device {device!r} did not open")
         v = int(self.cap.get(cv2.CAP_PROP_FOURCC))
-        fcs = "".join(chr((v >> (8 * i)) & 0xFF) for i in range(4)).strip()
-        self.desc = (f"{int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
-                     f"{int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} {fcs or '?'} "
-                     f"{self.cap.get(cv2.CAP_PROP_FPS):.0f}fps (backend {backend or 'auto'})")
+        got_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        got_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.info = dict(
+            device=device, backend=backend or "auto",
+            requested=dict(fourcc=fourcc, width=cap_size[0] if cap_size else None,
+                           height=cap_size[1] if cap_size else None),
+            reported=dict(fourcc_raw=v, fourcc=fourcc_label(v), width=got_w, height=got_h,
+                          fps=self.cap.get(cv2.CAP_PROP_FPS),
+                          backend_name=self.cap.getBackendName()),
+            size_request_took_effect=(cap_size is None
+                                      or (got_w, got_h) == tuple(cap_size)),
+            format_request_confirmable=fourcc_confirms_request(v),
+        )
+        self.desc = (f"{got_w}x{got_h} {self.info['reported']['fourcc']} "
+                     f"{self.cap.get(cv2.CAP_PROP_FPS):.0f}fps "
+                     f"(backend {self.info['reported']['backend_name']})")
+
+    def print_info(self):
+        i = self.info
+        print("=== capture device ===")
+        print(f"  index {i['device']}, backend requested {i['backend']}, "
+              f"in use {i['reported']['backend_name']}")
+        print(f"  requested : {i['requested']['fourcc'] or 'default'} "
+              f"{i['requested']['width']}x{i['requested']['height']}")
+        print(f"  reports   : {i['reported']['fourcc']} "
+              f"{i['reported']['width']}x{i['reported']['height']} "
+              f"{i['reported']['fps']:.0f} fps")
+        if not i["size_request_took_effect"]:
+            print("  !! the card did not accept the requested capture size; it is running at")
+            print("     the size above, so this run does not measure the setting you asked for")
+        if not i["format_request_confirmable"]:
+            print("  NOTE: the reported format is the converted buffer OpenCV hands us, so it")
+            print("     cannot confirm the card accepted the requested pixel format. Two runs")
+            print("     that differ only in --capture-fourcc may be measuring the same thing.")
+        if i["reported"]["fps"] <= 0:
+            print("  NOTE: the card does not report a frame rate; the freshness phase below")
+            print("     measures the delivered and changed rates directly instead.")
 
     def _loop(self):
         cv2 = self.cv2
@@ -362,6 +428,133 @@ def list_monitors():
     return out
 
 
+class DISPLAY_DEVICEW(ctypes.Structure):
+    _fields_ = [("cb", wt.DWORD), ("DeviceName", wt.WCHAR * 32),
+                ("DeviceString", wt.WCHAR * 128), ("StateFlags", wt.DWORD),
+                ("DeviceID", wt.WCHAR * 128), ("DeviceKey", wt.WCHAR * 128)]
+
+
+def display_device_info(device_name):
+    """Adapter and attached-monitor names for a `\\\\.\\DISPLAYn` device. The
+    monitor string comes from the EDID, so a capture card usually names itself
+    here — the quickest confirmation that --monitor points at the card."""
+    u = ctypes.windll.user32
+    u.EnumDisplayDevicesW.restype = wt.BOOL
+    u.EnumDisplayDevicesW.argtypes = [wt.LPCWSTR, wt.DWORD,
+                                      ctypes.POINTER(DISPLAY_DEVICEW), wt.DWORD]
+    out = {}
+    dd = DISPLAY_DEVICEW()
+    dd.cb = ctypes.sizeof(DISPLAY_DEVICEW)
+    if u.EnumDisplayDevicesW(None, 0, ctypes.byref(dd), 0):
+        pass                                    # enumerated below per device
+    dd = DISPLAY_DEVICEW()
+    dd.cb = ctypes.sizeof(DISPLAY_DEVICEW)
+    i = 0
+    while u.EnumDisplayDevicesW(None, i, ctypes.byref(dd), 0):
+        if dd.DeviceName == device_name:
+            out["adapter"] = dd.DeviceString
+            break
+        i += 1
+        dd = DISPLAY_DEVICEW()
+        dd.cb = ctypes.sizeof(DISPLAY_DEVICEW)
+    mon = DISPLAY_DEVICEW()
+    mon.cb = ctypes.sizeof(DISPLAY_DEVICEW)
+    if u.EnumDisplayDevicesW(device_name, 0, ctypes.byref(mon), 0):
+        out["monitor"] = mon.DeviceString
+        out["monitor_id"] = mon.DeviceID
+    return out
+
+
+def display_mode(device_name):
+    """Current mode of a display device: size, refresh rate, bit depth."""
+    u = ctypes.windll.user32
+    u.EnumDisplaySettingsW.restype = wt.BOOL
+    u.EnumDisplaySettingsW.argtypes = [wt.LPCWSTR, wt.DWORD, ctypes.POINTER(DEVMODEW)]
+    dm = DEVMODEW()
+    dm.dmSize = ctypes.sizeof(DEVMODEW)
+    if not u.EnumDisplaySettingsW(device_name, 0xFFFFFFFF, ctypes.byref(dm)):
+        return {}
+    return dict(width=int(dm.dmPelsWidth), height=int(dm.dmPelsHeight),
+                refresh_hz=int(dm.dmDisplayFrequency), bits_per_pixel=int(dm.dmBitsPerPel))
+
+
+def desktop_locked():
+    """True if the workstation is locked or on a secure desktop, in which case
+    no window can be shown and every screen read returns a frozen image. None
+    if it cannot be determined."""
+    try:
+        u = ctypes.windll.user32
+        DESKTOP_SWITCHDESKTOP = 0x0100
+        h = u.OpenInputDesktop(0, False, DESKTOP_SWITCHDESKTOP)
+        if not h:
+            return True
+        name = ctypes.create_unicode_buffer(256)
+        need = wt.DWORD()
+        u.GetUserObjectInformationW(h, 2, name, ctypes.sizeof(name), ctypes.byref(need))
+        u.CloseDesktop(h)
+        return name.value.lower() not in ("default", "")
+    except Exception:
+        return None
+
+
+def environment(chosen=None):
+    """Everything needed to interpret a run sent back from another machine."""
+    env = dict(
+        when=datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        python=sys.version.split()[0],
+        os=f"{platform.system()} {platform.release()} {platform.version()}",
+        machine=platform.machine(),
+        numpy=getattr(np, "__version__", None),
+        desktop_locked=desktop_locked(),
+    )
+    try:
+        import cv2
+        env["opencv"] = cv2.__version__
+    except Exception as e:
+        env["opencv"] = f"unavailable ({e})"
+    # DPI awareness decides whether Windows reports and accepts physical or
+    # scaled pixels. If this is not per-monitor, a full-screen window on a
+    # scaled display will not actually cover the monitor.
+    try:
+        lvl = ctypes.c_int()
+        if ctypes.windll.shcore.GetProcessDpiAwareness(None, ctypes.byref(lvl)) == 0:
+            env["dpi_awareness"] = {0: "unaware", 1: "system", 2: "per-monitor"}.get(
+                lvl.value, lvl.value)
+        else:
+            env["dpi_awareness"] = "unknown"
+    except Exception:
+        env["dpi_awareness"] = "unknown"
+    mons = []
+    for i, m in enumerate(list_monitors(), 1):
+        d = dict(index=i, device=m[4], x=m[0], y=m[1], width=m[2], height=m[3],
+                 primary=m[5], refresh_hz=m[6] if len(m) > 6 else None)
+        d.update(display_mode(m[4]))
+        d.update(display_device_info(m[4]))
+        d["chosen"] = (i == chosen)
+        mons.append(d)
+    env["monitors"] = mons
+    return env
+
+
+def print_environment(env):
+    print("=== environment ===")
+    print(f"  when        : {env['when']}")
+    print(f"  os          : {env['os']} ({env['machine']})")
+    print(f"  python      : {env['python']}   opencv {env.get('opencv')}   "
+          f"numpy {env.get('numpy')}")
+    print(f"  dpi aware   : {env.get('dpi_awareness')}")
+    if env.get("desktop_locked"):
+        print("  !! THE DESKTOP IS LOCKED OR ON A SECURE DESKTOP. No window can be shown")
+        print("     and every screen read returns a frozen image. Unlock and rerun.")
+    for m in env["monitors"]:
+        mark = " <-- using this one" if m.get("chosen") else ""
+        print(f"  monitor {m['index']}  : {m['device']} {m['width']}x{m['height']} "
+              f"{m.get('refresh_hz')} Hz {m.get('bits_per_pixel', '?')}bpp "
+              f"at ({m['x']},{m['y']}){' primary' if m['primary'] else ''}{mark}")
+        print(f"              adapter {m.get('adapter', '?')} / monitor "
+              f"{m.get('monitor', '?')}")
+
+
 def describe_monitors(mons):
     for i, m in enumerate(mons, 1):
         hz = f" {m[6]} Hz" if len(m) > 6 and m[6] else ""
@@ -439,6 +632,26 @@ class Flasher:
         self.root.configure(bg="black", cursor="none")
         self.canvas = None
         self.root.update()
+        # What the window actually became. If this does not match the monitor
+        # rect, the probes are reading something other than the test pattern
+        # and every number below is meaningless.
+        self.geometry = dict(
+            wanted=dict(x=x, y=y, w=w, h=h),
+            got=dict(x=self.root.winfo_rootx(), y=self.root.winfo_rooty(),
+                     w=self.root.winfo_width(), h=self.root.winfo_height()))
+        self.geometry["covers_monitor"] = (
+            self.geometry["got"]["w"] >= w and self.geometry["got"]["h"] >= h
+            and self.geometry["got"]["x"] <= x and self.geometry["got"]["y"] <= y)
+
+    def print_geometry(self):
+        g = self.geometry
+        print("=== test window ===")
+        print(f"  asked for {g['wanted']['w']}x{g['wanted']['h']} at "
+              f"({g['wanted']['x']},{g['wanted']['y']}), got {g['got']['w']}x{g['got']['h']} "
+              f"at ({g['got']['x']},{g['got']['y']})")
+        if not g["covers_monitor"]:
+            print("  !! the window does not cover the monitor. Usually display scaling with")
+            print("     the process not per-monitor DPI aware. The readings below are invalid.")
 
     def set(self, white):
         """Solid fill; returns the moment the repaint was requested."""
@@ -523,11 +736,18 @@ def calibrate(flasher, probes):
     return levels
 
 
-def run(mon, probes, trials, min_gap, max_gap, anim_seconds, anim_fps, link_hz=0):
+def run(mon, probes, trials, min_gap, max_gap, anim_seconds, anim_fps, link_hz=0,
+        env=None, json_path=None):
     flasher = Flasher(mon)
+    flasher.print_geometry()
+    for p in probes:
+        if hasattr(p, "print_info"):
+            p.print_info()
+    print()
     for p in probes:
         p.start()
     results, freshness, painted = {p.name: [] for p in probes}, {}, 0
+    calib, anim_elapsed = {}, 0.0
     try:
         time.sleep(0.5)
         levels = calibrate(flasher, probes)
@@ -539,6 +759,7 @@ def run(mon, probes, trials, min_gap, max_gap, anim_seconds, anim_fps, link_hz=0
                          f"seeing the window. Check --monitor (use --list) and, for the "
                          f"card, that the GPU's HDMI is plugged into it.")
             thr[p.name] = (lo + hi) / 2.0
+            calib[p.name] = dict(black=lo, white=hi, threshold=thr[p.name])
             print(f"{p.name}: black {lo:.0f}, white {hi:.0f}, threshold {thr[p.name]:.0f}")
         white = True
         for i in range(trials):
@@ -560,17 +781,35 @@ def run(mon, probes, trials, min_gap, max_gap, anim_seconds, anim_fps, link_hz=0
             time.sleep(0.3)
             for p in probes:
                 p.begin_window()
+            t_anim = time.perf_counter()
             painted = flasher.animate(anim_seconds, anim_fps)
+            anim_elapsed = time.perf_counter() - t_anim
             for p in probes:
                 freshness[p.name] = p.window_rates()
     finally:
         for p in probes:
             p.stop()
         flasher.close()
-    return report(results, probes, freshness, painted, link_hz)
+    rep = report(results, probes, freshness, painted, link_hz, anim_elapsed, anim_fps)
+    rep["environment"] = env
+    rep["window"] = flasher.geometry
+    rep["calibration"] = calib
+    rep["capture_device"] = next((p.info for p in probes if hasattr(p, "info")), None)
+    rep["trials"] = {k: v for k, v in results.items()}
+    if json_path:
+        try:
+            with open(json_path, "w", encoding="utf-8") as fh:
+                json.dump(rep, fh, indent=2, default=str)
+            print(f"\nfull report written to {json_path}")
+            print("Send that file back along with this console output; it carries the monitor")
+            print("mode, the card's reported settings and every per-flip number.")
+        except OSError as e:
+            print(f"\ncould not write {json_path}: {e}")
+    return rep
 
 
-def report(results, probes, freshness=None, painted=0, link_hz=0):
+def report(results, probes, freshness=None, painted=0, link_hz=0,
+           anim_elapsed=0.0, anim_target_fps=0):
     rep = {}
     print()
     print("LATENCY (how long a change takes to arrive)")
@@ -593,11 +832,20 @@ def report(results, probes, freshness=None, painted=0, link_hz=0):
         rep["freshness"] = dict(freshness)
         rep["freshness"]["painted_frames"] = painted
         rep["freshness"]["link_hz"] = link_hz
+        paint_hz = painted / anim_elapsed if anim_elapsed else 0.0
+        rep["freshness"]["paint_hz"] = round(paint_hz, 1)
+        rep["freshness"]["paint_target_hz"] = anim_target_fps
         print()
         print("FRESHNESS (how often a genuinely new frame arrives)")
         if link_hz:
             print(f"  the monitor runs at {link_hz} Hz, so the HDMI link cannot carry more")
-            print(f"  than {link_hz} distinct pictures a second; the PC painted {painted} frames")
+            print(f"  than {link_hz} distinct pictures a second")
+        print(f"  the PC painted {painted} frames in {anim_elapsed:.1f} s = {paint_hz:.1f}/s"
+              f" (target {anim_target_fps})")
+        if anim_target_fps and paint_hz < 0.9 * anim_target_fps:
+            print(f"  !! the animation only reached {paint_hz:.0f}/s of its {anim_target_fps}/s")
+            print("     target, so the source itself was the limit, not the card. Close other")
+            print("     programs and rerun before reading anything into the card's figure.")
         for p in probes:
             f = freshness.get(p.name)
             if not f:
@@ -649,11 +897,14 @@ def main(argv=None):
                     help="seconds of moving shapes for the freshness count (0 to skip)")
     ap.add_argument("--anim-fps", type=int, default=0,
                     help="target paint rate for the shapes (default: the monitor's refresh rate)")
+    ap.add_argument("--json", default=None,
+                    help="where to write the full report (default: capture_report_<stamp>.json)")
+    ap.add_argument("--no-json", action="store_true", help="do not write the report file")
     a = ap.parse_args(argv)
 
     mons = list_monitors()
     if a.list or not mons:
-        describe_monitors(mons)
+        print_environment(environment())
         return None
     if a.monitor is None:
         cands = [i for i, m in enumerate(mons, 1) if not m[5]]
@@ -664,21 +915,26 @@ def main(argv=None):
     mon = mons[a.monitor - 1]
     link_hz = mon[6] if len(mon) > 6 else 0
     anim_fps = a.anim_fps or link_hz or 60
-    print(f"flashing monitor {a.monitor}: {mon[4]} {mon[2]}x{mon[3]}"
-          f"{f' {link_hz} Hz' if link_hz else ''} at ({mon[0]},{mon[1]})")
+    env = environment(chosen=a.monitor)
+    env["argv"] = list(argv) if argv is not None else sys.argv[1:]
+    print_environment(env)
+    print()
 
     probes = []
     if not a.no_screen:
         probes.append(ScreenProbe(mon[0], mon[1], mon[2], mon[3]))
     if not a.no_hdmi:
         w, h = (int(v) for v in a.capture_res.lower().split("x"))
-        hp = HdmiProbe(a.device, a.capture_backend, a.capture_fourcc, (w, h))
-        print(f"card: {hp.desc}")
-        probes.append(hp)
+        probes.append(HdmiProbe(a.device, a.capture_backend, a.capture_fourcc, (w, h)))
     if not probes:
         sys.exit("nothing to measure")
     lo, hi = (float(v) for v in a.gap.split(","))
-    return run(mon, probes, a.trials, lo, hi, a.anim_seconds, anim_fps, link_hz)
+    json_path = None
+    if not a.no_json:
+        json_path = a.json or (
+            f"capture_report_{datetime.datetime.now():%Y%m%d_%H%M%S}.json")
+    return run(mon, probes, a.trials, lo, hi, a.anim_seconds, anim_fps, link_hz,
+               env=env, json_path=json_path)
 
 
 if __name__ == "__main__":

@@ -189,6 +189,23 @@ rather than a ten-game session, and no YouTube clip is needed: the tool is its
 own source and reports the paint rate it achieved. Worth doing at some point,
 but it is not on the round-18 path.
 
+Both tools now print an environment block before anything else, and the
+capture one also writes `capture_report_<date>.json` next to wherever you ran
+it. **Please send that file along with the console text.** I cannot see your
+machine, and between them they carry the things that decide whether a number
+is real: the monitor's refresh rate and the name it reports over HDMI (so I
+can confirm you pointed it at the card), whether the window actually covered
+the screen, what the card was asked for against what it reports back, how
+many frames the animation managed against its target, and every individual
+flip rather than just the median. It also shouts if the desktop is locked,
+which silently invalidates the whole run.
+
+One thing that block already settles: the format the card reports is
+`RGB24`, which is the converted buffer OpenCV hands us rather than what the
+card negotiated. That is why the round-16 YUY2 session could not be confirmed
+as a real format change, and the tool now says so in plain words instead of
+printing an unreadable four-character code.
+
 Meanwhile on my side: the MAME lab can apply the bot's commands late on
 purpose (it already runs at one tick late as its standard calibration, and
 the July cost curve showed each extra tick roughly halves the depth: 42 ->
