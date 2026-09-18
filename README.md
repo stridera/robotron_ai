@@ -302,23 +302,32 @@ chain polls at 50 Hz), so ~30 ms over a direct pad.
 `python -m robotron_ai.tools.measure_capture_latency --list`, then
 `... --monitor N --device 0 --capture-backend dshow --capture-fourcc MJPG --capture-res 1920x1080`
 with a spare HDMI cable from the PC's video card into the capture card
-(Windows shows the card as monitor N). The tool flashes a full-screen window
-black/white on that monitor and times each flip two ways at once: through
-the card with the bot's own OpenCV flags, and through a screen read of the
-same monitor, which is where the emulator's window capture reads. The
-difference is what the console picture pays on the video side over the
-emulator path (scan-out, card, decode, driver buffering). Measured on the
-operator's rig 2026-09-16 at MJPG 1920x1080: 37.5 ms, about 2.25 frames.
+(Windows shows the card as monitor N). The tool opens a full-screen window on
+that monitor and watches it two ways at once: through the card with the bot's
+own OpenCV flags, and through a screen read of the same monitor, which is
+where the emulator's window capture reads. It reports both halves of frame
+age.
 
-This is only half of frame age, so **never pick a capture setting from it
-alone.** The other half is how often a new frame arrives, which a flashing
-square cannot see: between flips the picture is static, so a repeated frame
-looks like a fresh one. Mean age adds about `1/(2*unique_hz)` on top of the
-latency, which is 10 ms at 50 unique frames/s and 54 ms at 9. On this card
-the 720p modes measured 4-7 ms lower latency here and far worse on
-`--probe-capture` (50.0 unique/s at MJPG 1080p against 22.2 and below at
-720p), so they lose on total age. Use this tool to compare the pipeline, and
-`--probe-capture` to decide.
+**Latency.** The window flips black/white at random moments and each flip is
+timed down both paths. The difference is what the console picture pays on the
+video side over the emulator path: scan-out, the card, the decode, driver
+buffering. Measured on the operator's rig 2026-09-16 at MJPG 1920x1080:
+37.5 ms, about 2.25 frames.
+
+**Freshness.** The window then animates moving shapes with a large centred
+beacon that takes the next of twelve colours on every painted frame, and both
+paths count frames that actually changed. The screen read is the source rate,
+so the card can never beat it, and the ratio says whether the card is
+repeating frames or the source never produced one. Mean frame age adds about
+`1/(2*unique_hz)` on top of the latency, which is 10 ms at 50 unique frames/s
+and 54 ms at 9, so a mode can be lower-latency and much staler at once.
+Always read the two together.
+
+Each probe reduces its view to a fixed-size centre patch before the change
+test, so the comparison does not depend on capture resolution. `--probe-capture`
+(below) does not: its change test samples a fixed pixel grid, which is 144
+points at 1080p and only 64 at 720p, so its cross-resolution ranking
+understates 720p by roughly that factor.
 
 ### Decision trace and death windows (hardware, on by default)
 
