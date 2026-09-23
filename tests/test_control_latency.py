@@ -23,9 +23,15 @@ class FakeReader:
 
 
 class ControlLatencyToolTest(unittest.TestCase):
-    def test_serial_bits_match_the_sketch(self):
-        # arduino/serial_pin_monitor.ino: myPins = [Y, X, B, A, LEFT, RIGHT, UP, DOWN]
-        self.assertEqual(mcl.BIT, dict(Y=1, X=2, B=4, A=8, LEFT=16, RIGHT=32, UP=64, DOWN=128))
+    def test_serial_bits_match_control_py(self):
+        """The tool's byte table must match the bytes the bot actually sends.
+        It did not until 2026-09-22 (Y, X, B, A), which is why two rounds of
+        measurements reported "drove A, pad said X"."""
+        from robotron_ai.control import SerialController as sc
+        self.assertEqual(
+            mcl.BIT,
+            dict(Y=sc.BTN_Y, A=sc.BTN_A, B=sc.BTN_B, X=sc.BTN_X,
+                 UP=sc.UP << 4, DOWN=sc.DOWN << 4, RIGHT=sc.RIGHT << 4, LEFT=sc.LEFT << 4))
 
     def test_wait_change_returns_when_state_differs(self):
         base = (0, 0, 0)

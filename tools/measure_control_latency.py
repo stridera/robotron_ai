@@ -23,9 +23,13 @@ import statistics
 import sys
 import time
 
-# Serial box protocol (arduino/serial_pin_monitor.ino): bit i -> pin order
-# [Y, X, B, A, LEFT, RIGHT, UP, DOWN]; 0 releases everything.
-BIT = dict(Y=1, X=2, B=4, A=8, LEFT=16, RIGHT=32, UP=64, DOWN=128)
+# Serial box protocol, defined by SerialController in control.py and mirrored
+# by every arduino/robotron_pad_* rev: bit i -> [Y, A, B, X, UP, DOWN, RIGHT, LEFT].
+# 0 releases everything. tests/test_control_latency.py checks this still agrees.
+# (Until 2026-09-22 this table read Y, X, B, A: "A" drove the X line, and the
+# pad's "reported X" on both the adapters and the direct pad was the tool's
+# own label error, not a wiring fault.)
+BIT = dict(Y=1, A=2, B=4, X=8, UP=16, DOWN=32, RIGHT=64, LEFT=128)
 XINPUT_BUTTON = dict(DPAD_UP=0x0001, DPAD_DOWN=0x0002, DPAD_LEFT=0x0004, DPAD_RIGHT=0x0008,
                      START=0x0010, BACK=0x0020, A=0x1000, B=0x2000, X=0x4000, Y=0x8000)
 
@@ -55,8 +59,8 @@ def print_environment(port, baud, trials, button, interval):
         print(f"  pyserial: unavailable ({e})")
     print(f"  serial  : port {port} at {baud} baud, {trials} trials of button {button} "
           f"({interval}s apart)")
-    print("  the serial byte is one bit per pin, order [Y, X, B, A, LEFT, RIGHT, UP, DOWN];")
-    print("  0 releases everything (arduino/serial_pin_monitor.ino)")
+    print("  the serial byte is one bit per line, order [Y, A, B, X, UP, DOWN, RIGHT, LEFT];")
+    print("  0 releases everything (control.py SerialController; arduino/robotron_pad_*)")
 
 
 class XInputReader:
@@ -195,8 +199,9 @@ def run(port, baud, trials, interval, button, reader):
           " the remainder after this number is the render/output/capture side)")
     if rep["changed"] and button not in rep["changed"]:
         print(f"  NOTE: we drove the {button} line but the pad reported "
-              f"{', '.join(rep['changed'])}. The adapter maps the lines differently on PC")
-        print("  than on the console; this measures the timing all the same.")
+              f"{', '.join(rep['changed'])}. Either the shield's pin map or this")
+        print("  tool's BIT table disagrees with control.py: run tools/verify_pad_wiring.py.")
+        print("  The timing measured here is right all the same.")
     press = rep["press"]
     if press.get("n", 0) >= 4 and press.get("p90_ms") and press.get("p10_ms"):
         step = press["p90_ms"] - press["p10_ms"]
