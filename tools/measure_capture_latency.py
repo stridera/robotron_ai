@@ -364,6 +364,56 @@ class HdmiProbe(Probe):
         self.cap.release()
 
 
+class MagewellProbe(Probe):
+    """The card through Magewell's SDK instead of DirectShow (robotron_ai.magewell).
+    `mode` is lowlatency (pull the frame while it is still arriving), normal
+    (pull it once complete) or timer."""
+    def __init__(self, mode, chunk_lines, cap_size):
+        super().__init__("hdmi")
+        import cv2
+        from robotron_ai import magewell
+        self.cv2, self.magewell = cv2, magewell
+        self.mode, self.chunk_lines = mode, chunk_lines
+        self.cap_size = cap_size or (1280, 720)
+        self.source = None
+        self.info = dict(backend="magewell-sdk", mode=mode, chunk_lines=chunk_lines,
+                         requested=dict(width=self.cap_size[0], height=self.cap_size[1]))
+        self.desc = f"{self.cap_size[0]}x{self.cap_size[1]} BGR24 via Magewell SDK, mode {mode}"
+
+    def print_info(self):
+        print("=== capture device ===")
+        print(f"  Magewell SDK (pymagewell), mode {self.mode}"
+              + (f", {self.chunk_lines}-line chunks" if self.mode == "lowlatency" else ""))
+        print(f"  requested : {self.cap_size[0]}x{self.cap_size[1]} BGR24, scaled on the card")
+        print("  the signal the card sees is printed when capture starts")
+
+    def start(self):
+        try:
+            self.source = self.magewell.MagewellSource(
+                width=self.cap_size[0], height=self.cap_size[1], cap_size=self.cap_size,
+                mode=self.mode, chunk_lines=self.chunk_lines, on_frame=self._on_frame)
+        except (ImportError, RuntimeError) as e:
+            sys.exit(f"magewell backend: {e}")
+        self.info.update(self.source.info)
+
+    def _on_frame(self, frame, t):
+        cv2 = self.cv2
+        h, w = frame.shape[:2]
+        x0, y0, x1, y1 = centre_rect(w, h, HDMI_ROI_FRAC)
+        patch = cv2.resize(frame[y0:y1, x0:x1], (32, 32),
+                           interpolation=cv2.INTER_AREA).astype(np.int16)
+        self.push(t, float(patch.mean()), patch)
+
+    def stop(self):
+        self.running = False
+        if self.source is not None:
+            st = self.source.stats()
+            self.info["pump"] = st
+            if st.get("error"):
+                print(f"  !! magewell capture stopped early: {st['error']}")
+            self.source.release()
+
+
 # ── monitors and the flashing / animating window ────────────────────────────
 
 class POINTL(ctypes.Structure):
@@ -886,7 +936,15 @@ def main(argv=None):
     ap.add_argument("--monitor", type=int, default=None,
                     help="1-based monitor index from --list (default: the non-primary one)")
     ap.add_argument("--device", type=int, default=0)
-    ap.add_argument("--capture-backend", default="dshow", choices=["auto", "msmf", "dshow"])
+    ap.add_argument("--capture-backend", default="dshow",
+                    choices=["auto", "msmf", "dshow", "magewell"],
+                    help="magewell = the card through Magewell's SDK (pip install pymagewell)")
+    ap.add_argument("--magewell-mode", default="lowlatency",
+                    choices=["lowlatency", "normal", "timer"],
+                    help="magewell backend: pull the frame while it arrives (lowlatency), "
+                         "after it is complete (normal), or on a software timer")
+    ap.add_argument("--magewell-chunk", type=int, default=64,
+                    help="magewell lowlatency: lines per transfer chunk (64, 128, 256)")
     ap.add_argument("--capture-fourcc", default="MJPG")
     ap.add_argument("--capture-res", default="1920x1080", help="WxH requested from the card")
     ap.add_argument("--no-hdmi", action="store_true", help="screen probe only (self-test)")
@@ -925,7 +983,10 @@ def main(argv=None):
         probes.append(ScreenProbe(mon[0], mon[1], mon[2], mon[3]))
     if not a.no_hdmi:
         w, h = (int(v) for v in a.capture_res.lower().split("x"))
-        probes.append(HdmiProbe(a.device, a.capture_backend, a.capture_fourcc, (w, h)))
+        if a.capture_backend == "magewell":
+            probes.append(MagewellProbe(a.magewell_mode, a.magewell_chunk, (w, h)))
+        else:
+            probes.append(HdmiProbe(a.device, a.capture_backend, a.capture_fourcc, (w, h)))
     if not probes:
         sys.exit("nothing to measure")
     lo, hi = (float(v) for v in a.gap.split(","))

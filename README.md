@@ -218,7 +218,9 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--trace-dir DIR` | `logs/hardware_report` | Hardware: where the trace goes |
 | `--death-seconds S` | `4.5` | Hardware: seconds of frames kept before each HUD death report (the collision is ~2-3 s before it) |
 | `--max-deaths N` | `120` | Hardware: stop saving death windows after N (a ten-game console session now has ~320 deaths, so the trace keeps the first 120) |
-| `--capture-backend {auto,msmf,dshow}` | `auto` | Capture API for the card |
+| `--capture-backend {auto,msmf,dshow,magewell}` | `auto` | Capture API for the card. `magewell` talks to a Pro Capture card through Magewell's SDK (`pip install pymagewell`), which has a low-latency mode DirectShow cannot reach; `--capture-fourcc`/`--capture-fps` do not apply to it |
+| `--magewell-mode {lowlatency,normal}` | `lowlatency` | `magewell` backend: pull each frame while the card is still receiving it, or after it is complete |
+| `--magewell-chunk N` | `64` | `magewell` lowlatency: lines per transfer chunk (64, 128, 256) |
 | `--capture-fourcc FMT` | card default | Pixel format to request (`MJPG`, `YUY2`) |
 | `--capture-fps N` | card default | Capture rate to request (e.g. `60`) |
 | `--capture-res WxH` | `1280x720` | Size to request from the card (downscaled to 1280x720) |
@@ -307,6 +309,13 @@ that monitor and watches it two ways at once: through the card with the bot's
 own OpenCV flags, and through a screen read of the same monitor, which is
 where the emulator's window capture reads. It reports both halves of frame
 age.
+
+On a Magewell Pro Capture card the tool can also read through Magewell's SDK
+(`--capture-backend magewell --magewell-mode lowlatency` or `normal`, after
+`pip install pymagewell`), which is the only way to reach the card's
+low-latency mode; run it, the `normal` mode and the DirectShow line above
+back to back and compare the `hdmi - screen` figures. See `magewell.py` for
+what the mode does and why DirectShow cannot do it.
 
 **Latency.** The window flips black/white at random moments and each flip is
 timed down both paths. The difference is what the console picture pays on the

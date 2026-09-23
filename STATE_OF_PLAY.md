@@ -258,6 +258,26 @@ wave against the emulator's 27-28k, i.e. 1.0 lives bought per wave against
 for a second sample; the next lever after that is either the ~55 ms (a
 lower-latency capture card is the only hardware piece left) or the income.
 
+**The capture card's own low-latency mode (built 2026-09-22, unmeasured).**
+Eric's card is a Magewell Pro Capture HDMI (11040), already a top-tier PCIe
+card; no card replaces it usefully. What it has that we never used is a
+low-latency mode reachable only through Magewell's SDK (there is no driver
+checkbox on this model): the host pulls a frame in 64-line chunks while the
+card is still receiving it, and Magewell's own 1080p60 figures are 32.0 ms
+normal against 17.7 ms in that mode. Our 36 ms at 720p is the normal figure
+plus conversion, so ~15 of the remaining ~55 ms should be there. New
+`magewell.py` (`--capture-backend magewell`, modes `lowlatency`/`normal`)
+captures through `pymagewell` (MIT, bundles LibMWCapture.dll; `pip install
+pymagewell`), asks the card for 1280x720 BGR24 directly so there is no MJPG
+decode or resize on the PC, and corrects one thing in pymagewell: its
+low-latency path transfers the last *complete* frame (`iNewestBufferedFullFrame`)
+where Magewell's recipe says the frame *being received* (`iNewestBuffering`),
+without which the partial notification gains nothing. The loopback tool has
+the same backend (`--capture-backend magewell --magewell-mode lowlatency|normal`)
+so the three paths compare in one sitting. No card on Strider's PC: the
+plumbing is tested against pymagewell's mock device only; the latency claim
+is Eric's loopback to make or break.
+
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while
 the emulator went from a W13.5 mean to ~W30 with the same code. Per wave,

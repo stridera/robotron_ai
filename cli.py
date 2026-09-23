@@ -62,8 +62,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="frame source for yolo input")
     io.add_argument("--device", default=None,
                     help="HDMI capture device index or path (hdmi source)")
-    io.add_argument("--capture-backend", choices=["auto", "msmf", "dshow"],
-                    default="auto", help="capture API for the card (hdmi)")
+    io.add_argument("--capture-backend", choices=["auto", "msmf", "dshow", "magewell"],
+                    default="auto", help="capture API for the card (hdmi); 'magewell' "
+                    "talks to a Pro Capture card through Magewell's SDK (pip install "
+                    "pymagewell) instead of DirectShow")
+    io.add_argument("--magewell-mode", choices=["lowlatency", "normal"], default="lowlatency",
+                    help="magewell backend: pull each frame while the card is still "
+                         "receiving it (lowlatency) or after it is complete (normal)")
+    io.add_argument("--magewell-chunk", type=int, default=64,
+                    help="magewell lowlatency: lines per transfer chunk (64, 128, 256)")
     io.add_argument("--capture-fourcc", default=None,
                     help="capture pixel format to request, e.g. MJPG or YUY2")
     io.add_argument("--capture-fps", type=int, default=None,
@@ -272,10 +279,19 @@ def _build_perception(cfg):
                 cap_size = (cw, ch)
             except ValueError:
                 sys.exit(f"error: --capture-res wants WxH, got {cfg.capture_res!r}")
-        source = perc.HdmiSource(device=0 if dev is None else dev,
-                                 backend=cfg.capture_backend,
-                                 fourcc=cfg.capture_fourcc,
-                                 fps=cfg.capture_fps, cap_size=cap_size)
+        if cfg.capture_backend == "magewell":
+            from . import magewell
+            try:
+                source = magewell.MagewellSource(width=1280, height=720, cap_size=cap_size,
+                                                 mode=cfg.magewell_mode,
+                                                 chunk_lines=cfg.magewell_chunk)
+            except (ImportError, RuntimeError) as e:
+                sys.exit(f"error: {e}")
+        else:
+            source = perc.HdmiSource(device=0 if dev is None else dev,
+                                     backend=cfg.capture_backend,
+                                     fourcc=cfg.capture_fourcc,
+                                     fps=cfg.capture_fps, cap_size=cap_size)
     else:
         source = perc.XeniaWindowSource()
     if not os.path.exists(cfg.weights):

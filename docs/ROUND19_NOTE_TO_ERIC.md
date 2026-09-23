@@ -63,11 +63,51 @@ emulator's rate (0.58 / 0.61 / 0.76 per wave by band against the emulator's
 is deeper: income (25.0k a wave against the emulator's 27-28k, so one man
 bought per wave against 1.1) and the wave 29+ death rate.
 
+## Before round 19: the card's own low-latency mode (a five-minute loopback)
+
+Your Magewell Pro Capture is already about the fastest card made, so there is
+no card to buy. What it has that we have never used is a low-latency mode:
+instead of handing over a frame after the whole thing has arrived and sat in
+a driver buffer, the PC pulls it in 64-line chunks while the card is still
+receiving it. Magewell's own numbers at 1080p60 are 32 ms normally and 18 ms
+in that mode, and our 36 ms is the normal figure. This card has no checkbox
+for it; it is only reachable through Magewell's SDK, so this build talks to
+the card through the SDK directly (`--capture-backend magewell`) and skips
+DirectShow, the MJPG decode and the resize entirely.
+
+It needs one extra package in the venv (it bundles Magewell's library, and
+the card's normal driver is all it needs otherwise):
+
+```
+.venv\Scripts\pip install pymagewell
+```
+
+Then the same loopback as last week (GPU HDMI into the card, `--list` for the
+monitor number), three runs, in this order:
+
+```
+.venv\Scripts\python -m robotron_ai.tools.measure_capture_latency --monitor 2 --capture-backend magewell --magewell-mode lowlatency --capture-res 1280x720
+.venv\Scripts\python -m robotron_ai.tools.measure_capture_latency --monitor 2 --capture-backend magewell --magewell-mode normal --capture-res 1280x720
+.venv\Scripts\python -m robotron_ai.tools.measure_capture_latency --monitor 2 --device 0 --capture-backend dshow --capture-fourcc MJPG --capture-res 1280x720
+```
+
+The third is last week's setting, as a same-day reference. The line to read
+is `hdmi - screen` in each: if lowlatency comes in well under the other two,
+the ten games below run with `--capture-backend magewell` added and nothing
+else changed. If it does not, or the SDK path fails to open the card, the
+console text will say why; send it and the three `capture_report_*.json`
+files either way. I have no card here, so this is the first time that code
+meets hardware; the most likely failure is a plain error at start-up, not a
+wrong number.
+
 ## Round 19
 
 Same command, same build plus the two fixes above, ten more games. Nothing
 about play changes; this is a second sample of the new configuration, so the
-next change can be measured against twenty games rather than ten.
+next change can be measured against twenty games rather than ten. If the
+loopback above favours the SDK path, add `--capture-backend magewell` to the
+command (drop `--capture-fourcc MJPG`, it does not apply); that is then the
+one change in this round.
 
 ```
 .venv\Scripts\python -m robotron_ai --mode hardware --device 0 --port COM4 --loop --games 10 --visualize --capture-backend dshow --capture-fourcc MJPG --capture-res 1280x720
