@@ -196,6 +196,49 @@ optos are soldered straight onto a wired VOYEE 360 pad, 9 ms against 39,
 [[project-direct-wired-360-pad]]) and `--capture-res 1280x720` (~6 ms, free).
 Round 18 takes both, judged by the reversal count.
 
+**Console round 18 (Eric, 2026-09-22, ten games, direct-wired pad on COM4 +
+`--capture-res 1280x720`, everything else the round-17 build): the console
+nearly doubled.** Waves 37, 29, 38, 32, 39, 36, 29, 11, 29, 18: mean **29.8**,
+median 30.5, console record **W39**, against 16.0-17.5 in rounds 15-16 (thirty
+prior games mean 16.6; Welch t = 4.4). Seven of ten games beat the old record
+of 28. Both changes were bench-measured beforehand, and the pad was re-measured
+on Eric's rig the same evening with `measure_control_latency`: press and
+release 11.4 ms median, p10-p90 11.2-11.7, forty trials with no polling
+staircase (the adapters gave 19.5/39.5). Two caveats on that run. The tool as
+shipped labels bit 3 "A" while `control.py` defines the low nibble as
+Y, A, B, X, so it drove the X line and the pad correctly reported X: a label
+error in the tool, not a wiring fault (the corrected byte order sits in
+uncommitted work in the main checkout alongside the pad firmware; both need
+pushing). And the loop ran at 17.5 Hz (the 720p decode is lighter; rounds
+15-16 ran 15.0-17.0), so tick counts are not exactly comparable across
+rounds; the trace's reversal count should be read in milliseconds.
+
+**Where round 18 sits by the life economy.** Score per wave 25,020, i.e. one
+life bought per wave; deaths 1.08 per wave by the economy (322 lives bought
+and lost over 298 waves), so the bot bleeds ~0.08 lives a wave and its three
+starting lives last ~37 waves, which is the 29-39 cluster. The emulator runs
+~0.8 deaths a wave in the same bands. Wave 100 needs the bleed under 0.03.
+
+**The HUD death tally undercounts badly in deep games (Eric's catch).** It
+saw 225 of the 322 deaths; games 1, 4 and 5 logged 17/40, 14/34 and 19/42.
+Mechanism: the icon row shows at most ~8 men, and from wave ~9 the bot has
+banked more than that, so a death drops nothing visible. The gaps in the log
+are exactly the stretches with a full row (game 1: no deaths logged W9-28,
+then 15 in W29-37 as the bank ran down). The near-complete games (game 7:
+32 of 33) confirm the 25k extra-man rule on the console. Since this build the
+GAME OVER line and the telemetry carry both figures (`D=17 on the HUD, 40 by
+the life economy`), the trace report flags the shortfall per game, and the
+per-wave deaths in deep games are to be read as lower bounds. The 120
+death-window cap was hit (as it was in every round-16 session), so the
+trace's death windows are the first 120 only.
+
+**What is still unknown from round 18: the reversal count.** The
+`hardware_report` folder was not sent, only the console text; it is still on
+Eric's machine (`C:\robotronai18\robotron_ai\logs\hardware_report`) and is
+the number that says how much of the ~36 ms came back and whether the
+console now sits at the emulator's 2 ticks. Round 19 is that folder first,
+then ten more games on the same build for a second sample.
+
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while
 the emulator went from a W13.5 mean to ~W30 with the same code. Per wave,

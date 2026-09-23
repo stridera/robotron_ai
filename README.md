@@ -217,7 +217,7 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--no-trace` | off | Hardware: don't write the per-tick decision trace and death-window frames (see below) |
 | `--trace-dir DIR` | `logs/hardware_report` | Hardware: where the trace goes |
 | `--death-seconds S` | `4.5` | Hardware: seconds of frames kept before each HUD death report (the collision is ~2-3 s before it) |
-| `--max-deaths N` | `60` | Hardware: stop saving death windows after N |
+| `--max-deaths N` | `120` | Hardware: stop saving death windows after N (a ten-game console session now has ~320 deaths, so the trace keeps the first 120) |
 | `--capture-backend {auto,msmf,dshow}` | `auto` | Capture API for the card |
 | `--capture-fourcc FMT` | card default | Pixel format to request (`MJPG`, `YUY2`) |
 | `--capture-fps N` | card default | Capture rate to request (e.g. `60`) |

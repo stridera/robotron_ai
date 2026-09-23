@@ -310,7 +310,7 @@ class HardwareTelemetry:
 
     def game_over(self, **kw):
         self.games.append({k: kw.get(k) for k in
-                           ("game", "wave", "score", "deaths")})
+                           ("game", "wave", "score", "deaths", "lives_bought")})
 
     # ── output ─────────────────────────────────────────────────────────
     def _save_frame(self, key, frame):

@@ -376,8 +376,13 @@ def main(argv=None) -> None:
                             print(f"[hud]  ** DIED #{kw['deaths']} **  "
                                   f"W{kw['wave']}")
                         elif kind == 'game_over':
+                            # Two death figures on purpose: the HUD tally
+                            # misses deaths while the icon row is full, the
+                            # life economy (3 + score/25000) cannot.
                             print(f"[hud] GAME OVER  W{kw['wave']} "
-                                  f"S{kw['score']} D={kw['deaths']}")
+                                  f"S{kw['score']} D={kw['deaths']} on the HUD, "
+                                  f"{kw.get('lives_bought', '?')} by the life "
+                                  f"economy (the true total)")
                         elif kind == 'new_game':
                             print("[hud] new game detected")
                     bookkeeper = hud_ocr.VisionBookkeeper(log_path=log,

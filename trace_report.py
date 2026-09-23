@@ -453,9 +453,13 @@ def format_report(rep):
     if rep['games']:
         L.append("games:")
         for g in rep['games']:
+            short = g['lives_bought'] - g['hud_deaths']
             L.append(f"  {g['game']}: W{g['max_wave']}  score {g['score']}  "
-                     f"HUD deaths {g['hud_deaths']}  lives bought {g['lives_bought']}  "
-                     f"{g['seconds']} s")
+                     f"HUD deaths {g['hud_deaths']}  lives bought {g['lives_bought']}"
+                     + (f"  (HUD missed {short}: icon row full)" if short > 1 else "")
+                     + f"  {g['seconds']} s")
+        L.append("  (a game ends with every life lost, so lives bought = 3 + score/25000 "
+                 "is the true death total; the HUD tally is a lower bound)")
     if rep['waves']:
         L.append("per wave (completed waves, mean over games):")
         L.append("  wave  n   deaths/wave  score/wave")

@@ -350,7 +350,10 @@ class VisionBookkeeper:
         stable score is either a misread (rejected) or, together with wave 1,
         a NEW GAME.
       * Deaths come from the lives-icon count dropping; extra men (every
-        25k) raise it, which is not a death.
+        25k) raise it, which is not a death. The row shows at most ~8 men,
+        so with more banked a death drops no icon: the per-wave tally is a
+        LOWER BOUND in deep games, and the game total is taken from
+        lives_bought() at game over instead.
       * Sustained unreadable HUD (GAME_OVER_S with no valid read) after a
         valid game = game over.
     """
@@ -438,12 +441,28 @@ class VisionBookkeeper:
         every few seconds."""
         return self.max_wave >= 2 or self.max_score >= 10000
 
+    # Extra man every 25,000 points (the arcade CMOS default; the console
+    # matches it: in round 18 the HUD tally never exceeded this figure and
+    # came within one of it in the games where the icon row never saturated).
+    EXTRA_MAN_EVERY = 25000
+    START_LIVES = 3
+
+    def lives_bought(self):
+        """Lives this game has been given so far, from the score alone. A game
+        ends only when every one of them is lost, so at GAME OVER this IS the
+        death count, and it is exact where the HUD tally is not: the icon row
+        shows at most ~8 men, so once the bot banks more than that a death
+        drops nothing visible and goes uncounted (round 18, game 1: 17 deaths
+        seen on the HUD against 40 bought; three games lost more than half)."""
+        return self.START_LIVES + self.max_score // self.EXTRA_MAN_EVERY
+
     def _new_game(self, t):
         if self.wave is not None and not self.game_over_fired \
                 and self._progressed() and self._game_over_id != self.game_id:
             self._game_over_id = self.game_id
             self.on_event('game_over', game=self.game_id, wave=self.max_wave,
-                          score=self.max_score, deaths=self.deaths)
+                          score=self.max_score, deaths=self.deaths,
+                          lives_bought=self.lives_bought())
         self.game_id = f"{int(t * 1000):x}"
         self.score, self.wave, self.lives = 0, 1, None
         self.deaths = self.wave_deaths = 0
@@ -617,6 +636,7 @@ class VisionBookkeeper:
                     self.wave_deaths += 1
                 self._log_wave(self.wave, t)
                 self.on_event('game_over', game=self.game_id, wave=self.max_wave,
-                score=self.max_score, deaths=self.deaths)
+                              score=self.max_score, deaths=self.deaths,
+                              lives_bought=self.lives_bought())
         return dict(score=self.score, wave=self.wave, lives=self.lives,
                     deaths=self.deaths)
