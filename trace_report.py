@@ -174,9 +174,17 @@ def player_speed(rows, min_run=6):
 
 def reversal_latency(rows, hold_before=3, hold_after=4, max_k=6):
     """Ticks from a 180-degree reversal command until the observed player
-    velocity aligns (>0.7) with it. Unresolved = never aligned within max_k."""
+    velocity aligns (>0.7) with it. Unresolved = never aligned within max_k.
+
+    Also in MILLISECONDS, because the tick length differs between rigs and
+    rounds (the console ran 57 ms ticks in round 18 against 67 on the
+    emulator, so "+3 ticks" there is 171 ms, not 200): `seen_by_ms` is the
+    time from the command to the sample in which the response was seen, and
+    `not_yet_ms` the time to the sample before it, in which it was not. The
+    true latency lies between the two medians."""
     hist = Counter()
     n = unresolved = 0
+    seen_by, not_yet = [], []
     for i in range(hold_before, len(rows) - hold_after - max_k):
         a, b = rows[i - 1].get('move'), rows[i].get('move')
         if a not in OPP or OPP[a] != b:
@@ -203,12 +211,21 @@ def reversal_latency(rows, hold_before=3, hold_after=4, max_k=6):
             unresolved += 1
         else:
             hist[found] += 1
+            t_cmd = rows[i].get('monotonic')
+            s_hi = rows[i + found].get('sampled_at')
+            s_lo = rows[i + found - 1].get('sampled_at')
+            if t_cmd is not None and s_hi is not None:
+                seen_by.append((s_hi - t_cmd) * 1000.0)
+                if s_lo is not None:
+                    not_yet.append((s_lo - t_cmd) * 1000.0)
     tot = sum(hist.values())
     ks = sorted(k for k in hist for _ in range(hist[k]))
     return dict(reversals=n, unresolved=unresolved,
                 median=ks[len(ks) // 2] if ks else None,
                 histogram={str(k): dict(n=hist[k], frac=round(hist[k] / tot, 3))
-                           for k in sorted(hist)} if tot else {})
+                           for k in sorted(hist)} if tot else {},
+                seen_by_ms=round(st.median(seen_by)) if seen_by else None,
+                not_yet_ms=round(st.median(not_yet)) if not_yet else None)
 
 
 # ── games, waves, deaths ──────────────────────────────────────────────────
@@ -450,6 +467,10 @@ def format_report(rep):
         hist = ', '.join(f"+{k}: {v['frac']:.0%}" for k, v in rl['histogram'].items())
         L.append(f"reversal response: median +{rl['median']} ticks  ({hist}; "
                  f"unresolved {rl['unresolved']}/{rl['reversals']})")
+        if rl.get('seen_by_ms') is not None:
+            L.append(f"  in ms: response seen by {rl['seen_by_ms']} ms, not yet at "
+                     f"{rl['not_yet_ms']} ms (true latency between the two; the "
+                     f"emulator reads 117 / 50; compare rigs in ms, ticks differ)")
     if rep['games']:
         L.append("games:")
         for g in rep['games']:

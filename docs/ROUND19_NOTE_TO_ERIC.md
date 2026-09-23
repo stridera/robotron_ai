@@ -43,14 +43,25 @@ bleeds about 0.08 men a wave, so its three starting men last about 37 waves,
 which is the 29-39 cluster you saw. Wave 100 needs that bleed under 0.03. The
 emulator, at its 2-tick loop, loses about 0.8 a wave in the same waves.
 
-## What I need from round 18 before anything else
+## What the trace says (folder received the same evening)
 
-**The `hardware_report` folder.** Only the console text came through, and the
-one number that says how much latency actually came back, the reversal count,
-lives in that folder. It is still on your machine at
-`C:\robotronai18\robotron_ai\logs\hardware_report`; please zip and send it as
-it is. Note the trace stopped saving death windows at 120 (the cap), which is
-fine, the decisions file is what matters.
+The reversal test now reads +3 ticks in 92% of cases, where rounds 15-16 read
++3 in about 60% and +4 in up to 29%. But the loop ran faster this time
+(57 ms ticks instead of ~63), so the fair unit is milliseconds, and the
+report now prints it that way: a reversal is **seen by 171 ms** after the
+command and **not yet seen at 111 ms**. The emulator on the same measure is
+117 and 50. Rounds 15-16 were about 210. So round 18 took ~40 ms out of the
+loop and ~55 ms remain, and we know where they are: the capture card's ~36 ms
+(your loopback) and the pad's 11 ms USB interval (your pad test). Nothing
+else is left; the console's own pipeline is the emulator's.
+
+Everything else in the trace is either at the emulator's level or better
+than before: player speed ratio 1.03, blind 23%, the card delivered 93%
+fresh frames with no stalls, and in waves 5-22 the console now dies at the
+emulator's rate (0.58 / 0.61 / 0.76 per wave by band against the emulator's
+0.64 / 0.79 / 0.88; rounds 15-16 were 1.0-1.7). What separates the two now
+is deeper: income (25.0k a wave against the emulator's 27-28k, so one man
+bought per wave against 1.1) and the wave 29+ death rate.
 
 ## Round 19
 

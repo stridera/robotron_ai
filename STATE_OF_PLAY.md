@@ -232,12 +232,31 @@ per-wave deaths in deep games are to be read as lower bounds. The 120
 death-window cap was hit (as it was in every round-16 session), so the
 trace's death windows are the first 120 only.
 
-**What is still unknown from round 18: the reversal count.** The
-`hardware_report` folder was not sent, only the console text; it is still on
-Eric's machine (`C:\robotronai18\robotron_ai\logs\hardware_report`) and is
-the number that says how much of the ~36 ms came back and whether the
-console now sits at the emulator's 2 ticks. Round 19 is that folder first,
-then ten more games on the same build for a second sample.
+**The round-18 trace (folder received 2026-09-22 evening): the loop is
+~55 ms behind the emulator, down from ~100.** Reversal response +3 ticks in
+92% (+2 5%, +4 3%; rounds 15-16 were +3 in 57-64% and +4 in 9-29%), but the
+tick is 57.1 ms now, so in milliseconds, which is the only fair unit across
+rigs (`trace_report` prints both since this build): response **seen by 171 ms,
+not yet at 111 ms** (median; p10-p90 163-178). The emulator on the same
+measure (two Sept-13 Xenia production traces, 66.7 ms ticks) reads seen by
+117, not yet at 50. Rounds 15-16 were ~3.3 ticks of ~63 ms, i.e. seen by
+~205-215 ms. So round 18 recovered ~40 ms and ~55 ms remain, which is the
+two paths already measured on the bench: the capture card's ~36 ms (720p
+loopback) and the pad's 11 ms USB report interval. Nothing else is left in
+the budget; the console's own pipeline is the emulator's. Everything else in
+the trace matches the emulator or improved: player speed ratio 1.029, blind
+22.7% (emulator 19-21%), eye never stalls (pump 59.9 fps, 55.9 changed/s,
+93% of frames fresh, as the loopback said), HUD coverage 93%, killer UNSEEN
+27% (rounds 15-16: 30-33%; emulator 18%), wall 37% (emulator 52%), killers
+UNSEEN 59, enforcer bullet 49, grunt 36, tank shell 27, cruise missile 17.
+HUD deaths per wave (lower bounds, see above) by band: W5-9 0.58, W10-16
+0.61, W17-22 0.76, against 1.00-1.04 / 1.05-1.22 / 1.42-1.67 in rounds 15-16
+and the emulator's 0.64 / 0.79 / 0.88. Within those bands the console now
+dies at the emulator's rate; the remaining depth gap is income (25.0k per
+wave against the emulator's 27-28k, i.e. 1.0 lives bought per wave against
+1.1) plus the deep-wave bleed. Round 19 is ten more games on the same build
+for a second sample; the next lever after that is either the ~55 ms (a
+lower-latency capture card is the only hardware piece left) or the income.
 
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while
