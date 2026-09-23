@@ -138,6 +138,7 @@ class HdmiSource(FrameSource):
             self.cap.set(cv2.CAP_PROP_FPS, fps)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.w, self.h = width, height
+        self.info = None
         if not self.cap.isOpened():
             print(f"[hdmi] WARNING: capture device {device!r} did not open")
         else:
@@ -145,10 +146,17 @@ class HdmiSource(FrameSource):
             fcs = "".join(chr((v >> (8 * i)) & 0xFF) for i in range(4)).strip()
             if not fcs.isprintable() or not fcs.isascii():
                 fcs = f"0x{v & 0xFFFFFFFF:08x}"     # DirectShow custom formats
-            print(f"[hdmi] card reports {int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
-                  f"{int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} {fcs or '?'} "
-                  f"{self.cap.get(cv2.CAP_PROP_FPS):.0f}fps "
-                  f"(backend {backend or 'auto'})")
+            got_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            got_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            got_fps = self.cap.get(cv2.CAP_PROP_FPS)
+            # Read once here, at open time: cv2.VideoCapture is not
+            # thread-safe and the pump thread below is inside grab()/
+            # retrieve() for the rest of this source's life.
+            self.info = dict(backend=self.cap.getBackendName(), device=device,
+                             requested=backend or "auto", fourcc=fcs or None,
+                             width=got_w, height=got_h, fps=got_fps)
+            print(f"[hdmi] card reports {got_w}x{got_h} {fcs or '?'} "
+                  f"{got_fps:.0f}fps (backend {backend or 'auto'})")
         # BACKGROUND CAPTURE THREAD (hardware round 2). The old path drained
         # the backend queue with 3 blocking grab()s per read; on a real card
         # those block on frame boundaries and cost ~85 ms/tick — with GPU

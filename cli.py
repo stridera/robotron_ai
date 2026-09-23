@@ -264,6 +264,16 @@ def _build_controller(cfg):
     return control.SerialController(cfg.port, baud=cfg.baud, simulate=cfg.simulate)
 
 
+def _capture_info(source):
+    """What we can cheaply say about a frame source, for the trace's capture
+    key. Both MagewellSource (magewell.describe) and HdmiSource build this at
+    open time and expose it as .info — HdmiSource's pump thread lives inside
+    cv2.VideoCapture.grab()/retrieve() for the life of the source, and
+    cv2.VideoCapture is not thread-safe, so its properties must not be read
+    again from here."""
+    return getattr(source, "info", None)
+
+
 def _build_perception(cfg):
     if cfg.input == "memory":
         return perc.MemoryPerception()
@@ -415,10 +425,13 @@ def main(argv=None) -> None:
             if not cfg.no_trace:
                 from .trace import HardwareTrace
                 trace_dir = cfg.trace_dir or telemetry.out
+                src = getattr(perception, "source", None)
                 trace = HardwareTrace(trace_dir, hz=cfg.hz,
                                       death_before_s=cfg.death_seconds,
                                       max_deaths=cfg.max_deaths,
-                                      deaths=(bookkeeper is not None))
+                                      deaths=(bookkeeper is not None),
+                                      capture_info=_capture_info(src),
+                                      capture_source=src)
                 print(f"[cli] decision trace + death windows -> {trace_dir}"
                       + ("" if bookkeeper is not None else
                          " (no HUD bookkeeping: decisions only)"))

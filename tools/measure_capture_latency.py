@@ -153,6 +153,32 @@ def kept_fraction(source_unique_hz, card_unique_hz):
     return card_unique_hz / source_unique_hz
 
 
+def derive_sdk_ms(ts):
+    """Card-only latency for one frame, from magewell.frame_timestamps:
+    `card_ms` (already computed on the device's own clock — see
+    magewell.frame_timestamps/device_time_to_dev_s, never mixed with host
+    datetime.now()) and `scanout_ms` = buffering_complete - buffering_started
+    (both device-clock-mapped datetimes, so plain subtraction is valid, but
+    only meaningful in normal mode: in lowlatency mode buffering_complete is
+    unset for the still-buffering frame and maps to a bogus datetime, so any
+    result outside 0 < x < 100 ms is rejected to None). None (the whole dict)
+    if neither figure is available (e.g. the mock, which has no device
+    clock)."""
+    from robotron_ai.magewell import TIMESTAMP_KEYS
+    if all(ts.get(k) is None for k in TIMESTAMP_KEYS) and ts.get("card_ms") is None:
+        return None
+    card_ms = ts.get("card_ms")
+    scanout_ms = None
+    bs, bc = ts.get("buffering_started"), ts.get("buffering_complete")
+    if bs is not None and bc is not None:
+        candidate = (bc - bs).total_seconds() * 1000.0
+        if 0 < candidate < 100:
+            scanout_ms = candidate
+    if card_ms is None and scanout_ms is None:
+        return None
+    return dict(card_ms=card_ms, scanout_ms=scanout_ms)
+
+
 # ── probes ──────────────────────────────────────────────────────────────────
 
 class Probe:
@@ -379,6 +405,10 @@ class MagewellProbe(Probe):
         self.info = dict(backend="magewell-sdk", mode=mode, chunk_lines=chunk_lines,
                          requested=dict(width=self.cap_size[0], height=self.cap_size[1]))
         self.desc = f"{self.cap_size[0]}x{self.cap_size[1]} BGR24 via Magewell SDK, mode {mode}"
+        # (t, derived-ms-dict-or-None) per frame, same t as push(), so a
+        # trial's crossing time can be matched back to the SDK timestamps
+        # for the frame that caused it (see ts_near / the CARD-ONLY report).
+        self.ts_log = collections.deque(maxlen=20000)
 
     def print_info(self):
         print("=== capture device ===")
@@ -391,7 +421,8 @@ class MagewellProbe(Probe):
         try:
             self.source = self.magewell.MagewellSource(
                 width=self.cap_size[0], height=self.cap_size[1], cap_size=self.cap_size,
-                mode=self.mode, chunk_lines=self.chunk_lines, on_frame=self._on_frame)
+                mode=self.mode, chunk_lines=self.chunk_lines, on_frame=self._on_frame,
+                on_frame_ts=self._on_frame_ts)
         except (ImportError, RuntimeError) as e:
             sys.exit(f"magewell backend: {e}")
         self.info.update(self.source.info)
@@ -403,6 +434,23 @@ class MagewellProbe(Probe):
         patch = cv2.resize(frame[y0:y1, x0:x1], (32, 32),
                            interpolation=cv2.INTER_AREA).astype(np.int16)
         self.push(t, float(patch.mean()), patch)
+
+    def _on_frame_ts(self, ts, t):
+        derived = derive_sdk_ms(ts)
+        with self.lock:                 # ts_log is appended here, off the pump thread
+            self.ts_log.append((t, derived))
+
+    def ts_near(self, target_t):
+        """The derived SDK-ms dict (or None) for the logged frame closest in
+        time to `target_t`, i.e. the frame that caused a threshold crossing.
+        Snapshots ts_log under the same lock push() uses before searching:
+        the pump thread appends to it concurrently, and min() over a deque
+        being mutated under it raises "deque mutated during iteration"."""
+        with self.lock:
+            items = list(self.ts_log)
+        if not items:
+            return None
+        return min(items, key=lambda item: abs(item[0] - target_t))[1]
 
     def stop(self):
         self.running = False
@@ -811,7 +859,14 @@ def run(mon, probes, trials, min_gap, max_gap, anim_seconds, anim_fps, link_hz=0
             thr[p.name] = (lo + hi) / 2.0
             calib[p.name] = dict(black=lo, white=hi, threshold=thr[p.name])
             print(f"{p.name}: black {lo:.0f}, white {hi:.0f}, threshold {thr[p.name]:.0f}")
+        # calibrate() leaves the window WHITE (it ends on the white=True leg).
+        # Trial 1 used to flip to white too, i.e. no change at all, so it
+        # measured nothing: force black here so the first trial is a real
+        # flip, settling the same 0.8 s calibrate() gives each level.
+        flasher.set(False)
+        time.sleep(0.8)
         white = True
+        card_samples = collections.defaultdict(list)
         for i in range(trials):
             time.sleep(random.uniform(min_gap, max_gap))
             t0 = flasher.set(white)
@@ -819,10 +874,37 @@ def run(mon, probes, trials, min_gap, max_gap, anim_seconds, anim_fps, link_hz=0
             for p in probes:
                 dt = p.wait_crossing(t0, thr[p.name], white, 1.0)
                 results[p.name].append(dt)
+                if dt is not None and hasattr(p, "ts_near"):
+                    derived = p.ts_near(t0 + dt / 1000.0)
+                    if derived is not None:
+                        card_samples[p.name].append(derived)
                 line.append(f"{p.name} {dt:6.1f} ms" if dt is not None else f"{p.name}   -    ")
             tag = "white" if white else "black"
             print(f"trial {i + 1:2d}/{trials} to {tag}: " + "  ".join(line), flush=True)
             white = not white
+
+        for p in probes:
+            if not hasattr(p, "ts_near"):
+                continue
+            print()
+            print(f"CARD-ONLY ({p.name}, from the SDK's own device-clock timestamps, "
+                  "independent of the PC's display pipeline)")
+            samples = card_samples.get(p.name, [])
+            if not samples:
+                print("  SDK timestamps unavailable")
+                p.info["sdk_timestamps"] = None
+                continue
+            stats = dict(clock="device")
+            for key in ("card_ms", "scanout_ms"):
+                vals = [s[key] for s in samples if s.get(key) is not None]
+                stats[key] = summarize(vals)
+                note = "" if key == "card_ms" else \
+                    "  (normal mode only: unset in lowlatency, rejected if implausible)"
+                print(f"  {key:10s}: {stats[key]}{note}")
+            print("    card_ms is what the console path pays for the card alone, on the card's")
+            print("    own clock; hdmi_minus_screen minus card_ms is the PC compositor's share,")
+            print("    which the console does not pay.")
+            p.info["sdk_timestamps"] = stats
 
         if anim_seconds > 0:
             print(f"\nfreshness: {anim_seconds:.0f} s of moving shapes "

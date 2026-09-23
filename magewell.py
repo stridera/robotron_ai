@@ -93,6 +93,41 @@ def frame_index_for_transfer(buffer_status, mode):
     return int(buffer_status.last_buffered_frame_index)
 
 
+TIMESTAMP_KEYS = ("buffering_started", "buffering_complete",
+                  "transfer_started", "transfer_complete")
+
+
+def device_time_to_dev_s(dt, init):
+    """Invert pymagewell's device_time_to_system_time (device_status.py): map
+    one of its mapped datetimes (buffering_started/complete, transfer_started)
+    back to the device's own tick clock, so it can be compared to another
+    device-clock reading without going through host datetime.now() — which on
+    Windows ticks at 15.6 ms and would swamp a sub-frame latency figure."""
+    return (dt - init.system_time_as_datetime).total_seconds() + init.device_time_in_s
+
+
+def frame_timestamps(frame, dev_now_s, device):
+    """The SDK's own clock for this frame: pymagewell's VideoFrame.timestamps
+    (buffering_started/complete, transfer_started/complete — all datetimes
+    mapped from the card's tick clock, EXCEPT transfer_complete, which
+    pymagewell stamps with a genuine host datetime.now() and must never be
+    mixed with the device clock) plus `card_ms`, computed entirely on the
+    device clock: time from the first line of this frame reaching the card
+    (buffering_started) to Python holding the whole frame (`dev_now_s`, read
+    right after transfer_when_ready() returned). None per key, and `card_ms`
+    None, if the device did not fill a timestamp or has no device clock (the
+    mock has neither) — this must never crash the pump."""
+    ts = getattr(frame, "timestamps", None)
+    out = {k: getattr(ts, k, None) for k in TIMESTAMP_KEYS} if ts is not None \
+        else {k: None for k in TIMESTAMP_KEYS}
+    out["card_ms"] = None
+    init = getattr(device, "_device_init_time", None)
+    bs = out.get("buffering_started")
+    if dev_now_s is not None and init is not None and bs is not None:
+        out["card_ms"] = (dev_now_s - device_time_to_dev_s(bs, init)) * 1000.0
+    return out
+
+
 if HAVE_PYMAGEWELL:
     from ctypes import addressof
     from datetime import timedelta
@@ -183,10 +218,14 @@ class MagewellSource(FrameSource):
 
     def __init__(self, width=1280, height=720, mode="lowlatency",
                  chunk_lines=DEFAULT_CHUNK_LINES, colour="BGR24", cap_size=None,
-                 device_factory=None, on_frame=None, quiet=False):
+                 device_factory=None, on_frame=None, on_frame_ts=None, quiet=False):
         """`width` x `height` is what read() returns (the model's 1280x720);
         `cap_size` is what the card is asked to deliver, default the same, so
-        normally the card does the scaling and read() copies nothing."""
+        normally the card does the scaling and read() copies nothing.
+        `on_frame_ts(ts, t)` is called from the pump thread alongside
+        `on_frame`, with the SDK's own timestamps for that frame (see
+        frame_timestamps()) plus the same perf_counter `t`; kept separate from
+        `on_frame` so its (frame, t) signature never changes."""
         _need()
         if mode not in MODES:
             raise ValueError(f"magewell mode must be one of {MODES}, not {mode!r}")
@@ -206,6 +245,7 @@ class MagewellSource(FrameSource):
                   f"{s['fps']:.0f}fps -> {cw}x{ch} {colour} via the SDK, "
                   f"mode {mode}" + (f" ({chunk_lines}-line chunks)" if mode == "lowlatency" else ""))
         self._on_frame = on_frame
+        self._on_frame_ts = on_frame_ts
         self._lock = threading.Lock()
         self._latest = None
         self._latest_t = None
@@ -231,15 +271,23 @@ class MagewellSource(FrameSource):
             except Exception as e:                  # noqa: BLE001 - a dead pump
                 self.error = f"{type(e).__name__}: {e}"    # must be visible
                 break
+            # Card-clock reading for card_ms, taken immediately: the mock has
+            # no device clock, so this is None off it (see frame_timestamps).
+            dev_time_fn = getattr(self.device, "_get_device_time_in_s", None)
+            dev_now_s = dev_time_fn() if dev_time_fn is not None else None
             t = time.perf_counter()
             arr = frame.as_array()                  # BGR uint8, h x w x 3
             self.pump_frames += 1
+            # Publish before the change-test bookkeeping below: read() must
+            # never wait on a 64x36 resize + absdiff it does not need.
+            with self._lock:
+                self._latest, self._latest_t = arr, t
+            if self._on_frame_ts is not None:
+                self._on_frame_ts(frame_timestamps(frame, dev_now_s, self.device), t)
             tiny = cv2.resize(arr, (64, 36), interpolation=cv2.INTER_AREA)
             if self._pump_prev is None or cv2.absdiff(tiny, self._pump_prev).max() > 8:
                 self.pump_changed += 1
             self._pump_prev = tiny
-            with self._lock:
-                self._latest, self._latest_t = arr, t
             if self._on_frame is not None:
                 self._on_frame(arr, t)
         self._running = False

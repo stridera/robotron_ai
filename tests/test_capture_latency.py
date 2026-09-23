@@ -108,6 +108,41 @@ class FreshnessPartsTest(unittest.TestCase):
         self.assertIsNone(mcap.kept_fraction(0.0, 30.0))
 
 
+class CardOnlySdkTimestampsTest(unittest.TestCase):
+    """derive_sdk_ms: card_ms is trusted as-is (already device-clock-only,
+    see magewell.frame_timestamps); scanout_ms is only plausible in normal
+    mode, so an implausible value (buffering_complete mapping to a bogus
+    datetime, as happens when it is unset in lowlatency mode) must come back
+    None rather than pollute the CARD-ONLY report."""
+
+    def _ts(self, buffering_started, buffering_complete, card_ms=None):
+        return dict(buffering_started=buffering_started, buffering_complete=buffering_complete,
+                   transfer_started=buffering_started, transfer_complete=buffering_complete,
+                   card_ms=card_ms)
+
+    def test_implausible_scanout_is_rejected_to_none(self):
+        import datetime
+        bs = datetime.datetime(2026, 1, 1)
+        # buffering_complete unset in lowlatency mode maps to a bogus,
+        # far-earlier datetime: a huge negative "scanout".
+        bc = bs - datetime.timedelta(seconds=5)
+        out = mcap.derive_sdk_ms(self._ts(bs, bc, card_ms=12.0))
+        self.assertIsNone(out["scanout_ms"])
+        self.assertEqual(out["card_ms"], 12.0)   # card_ms is untouched by the rejection
+
+    def test_plausible_scanout_is_kept(self):
+        import datetime
+        bs = datetime.datetime(2026, 1, 1)
+        bc = bs + datetime.timedelta(milliseconds=12)
+        out = mcap.derive_sdk_ms(self._ts(bs, bc))
+        self.assertAlmostEqual(out["scanout_ms"], 12.0, places=3)
+
+    def test_neither_figure_available_returns_none(self):
+        self.assertIsNone(mcap.derive_sdk_ms(dict(
+            buffering_started=None, buffering_complete=None,
+            transfer_started=None, transfer_complete=None, card_ms=None)))
+
+
 class DiagnosticsTest(unittest.TestCase):
     """The tool runs on someone else's machine and all that comes back is its
     output, so the things needed to interpret a run must be in it."""

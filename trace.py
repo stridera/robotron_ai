@@ -266,7 +266,13 @@ class HardwareTrace:
     SUMMARY = "trace_summary.json"
 
     def __init__(self, out_dir, hz=15.0, death_before_s=4.5, death_after_s=1.0,
-                 max_deaths=120, decisions=True, deaths=True):
+                 max_deaths=120, decisions=True, deaths=True,
+                 capture_info=None, capture_source=None):
+        """`capture_info`: a snapshot of the frame source's settings, taken at
+        the start of the run (e.g. MagewellSource.info). `capture_source`: the
+        live source object, if it has .stats(), read at close() for delivered/
+        changed rates over the whole run. Either may be None (memory input has
+        no frame source)."""
         self.out_dir = out_dir
         self.decisions = DecisionTrace(out_dir) if decisions else None
         self.ring = (DeathRing(out_dir, hz=hz, before_s=death_before_s,
@@ -276,6 +282,8 @@ class HardwareTrace:
         self._last_go = False
         self.n_marks = 0
         self.t0 = time.time()
+        self.capture_info = capture_info
+        self.capture_source = capture_source
 
     def tick(self, *, frame, obs, move, fire, blind, held, bookkeeper=None,
              sampled_at=None, seq=None, brain=None):
@@ -318,11 +326,21 @@ class HardwareTrace:
             self.decisions.flush()
 
     def close(self):
+        capture = None
+        if self.capture_info is not None or self.capture_source is not None:
+            stats = None
+            if self.capture_source is not None:
+                try:
+                    stats = self.capture_source.stats()
+                except Exception:
+                    stats = None
+            capture = dict(info=self.capture_info, stats=stats)
         summary = dict(schema="robotron_ai.hardware_trace.v1",
                        elapsed_s=round(time.time() - self.t0, 1),
                        marks=self.n_marks,
                        decisions=self.decisions.close() if self.decisions else None,
-                       deaths=self.ring.close() if self.ring else None)
+                       deaths=self.ring.close() if self.ring else None,
+                       capture=capture)
         try:
             with open(os.path.join(self.out_dir, self.SUMMARY), "w",
                       encoding="utf-8") as f:
