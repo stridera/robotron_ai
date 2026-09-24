@@ -1,4 +1,4 @@
-# Robotron 2084 bot — state of play (updated 2026-09-15)
+# Robotron 2084 bot — state of play (updated 2026-09-23)
 
 A single-page orientation for anyone (or any fresh context) picking this up.
 Facts only; every number below comes from a logged run. The complete history of
@@ -277,6 +277,65 @@ the same backend (`--capture-backend magewell --magewell-mode lowlatency|normal`
 so the three paths compare in one sitting. No card on Strider's PC: the
 plumbing is tested against pymagewell's mock device only; the latency claim
 is Eric's loopback to make or break.
+
+**Console bench, 2026-09-23 (Eric, the low-latency loopback measured): the
+card's own cost is 16.9 ms and no card beats it.** The same three loopback
+runs as before (720p on a Windows monitor into the card), now with the tool
+reading the card's clock: `hdmi` median 33.7 ms in the SDK's low-latency mode,
+46.8 normal, 37.4 DirectShow MJPG; `hdmi - screen` 29.6 / 41.9 / 33.1. The new
+CARD-ONLY line, first line of the frame at the card to Python holding it,
+entirely on the device clock: **16.9 ms low-latency (p10-p90 16.9-17.0, n=40)
+against 28.1 normal** (its scan-out 16.6 flat, the rest the whole-frame DMA
+the low-latency mode overlaps). 16.9 is one 60 Hz scan-out plus 0.2 ms: the
+floor for any card that hands over complete frames, so the "lower-latency
+card" branch is closed. The remaining 12.7 ms of `hdmi - screen` on the bench
+is the PC compositor holding the flip until the next refresh, which the
+Xbox 360 (720p straight into the card, one cable) does not pay; the bench's
+36 ms was never the console's number. Trial 1 of every earlier run was invalid
+(calibration left the window white and the first flip was to white; fixed in
+7da0208), which is where the 2-10 ms first readings and the negative minimum
+came from. Kept fraction 92-93% and unique 54-55/s in all three modes, so the
+frame loss is source-side, unchanged.
+
+**Console round 19 (Eric, 2026-09-23, ten games, round-18 build plus
+`--capture-backend magewell --magewell-mode lowlatency`): mean 38.1, record
+W52.** Waves 35, 44, 52, 40, 35, 41, 19, 22, 51, 42: mean **38.1**, median
+40.5, two games past W50, against 29.8 / W39 in round 18 and 16-17.5 before.
+Score per wave 25.7k (round 18: 25.0k), so the gain is survival, not income,
+which is what a latency cut should look like. The trace (`capture` key now in
+`trace_summary.json`: magewell-sdk, lowlatency, signal LOCKED 1280x720
+59.95, pump 59.94 Hz, 56.25 changed/s = 94% fresh) ran 141,302 ticks at
+57.1 ms, blind 22.2%, HUD coverage 94%, killer UNSEEN 31% (75), grunt 47,
+enforcer bullet 43, tank shell 32, cruise missile 18; wall 37%. HUD deaths
+254 against far more by the economy (game 3: 26 on the HUD, 58 bought), as
+expected in deep games.
+
+**The reversal figure did not move, and that is the instrument, not the
+loop.** `trace_report` prints "seen by 167 ms, not yet at 110" (round 18:
+171 / 111), but those are the sample times of the frames on either side of
+the response, i.e. the tick grid; a change smaller than the 57 ms tick cannot
+move them. The tick split did move: response at **+2 ticks in 39% of clean
+reversals (round 18: 5%)**, +3 in 61%. Under a uniform-phase model that is a
+shift of about 15 ms, the card's 11 ms plus the MJPG decode that is gone. The
+same quantisation applies to the emulator's "117 / 50" (66.7 ms ticks), so
+the console-to-emulator gap has never been measured to better than ~50 ms;
+the next `trace_report` should print a phase-corrected estimate from the
+split and be run over the Xenia traces again. Caveat: 30 of the 66 clean
+reversals were unresolved (no movement in the new direction within six
+ticks). They are spread over all eight directions (not the pad), a third sit
+next to a HUD-logged death and the HUD misses about half of deep-game deaths,
+and the rest are players already stationary at the command; none is a slow
+response, so the 39% is not biased by them. Round 18 did not record its
+unresolved count; re-running the current report on that folder is the check.
+
+**Budget after round 19.** Card 16.9, pad 11.4, and the 360's own present
+pipeline (a vsynced port holds each frame one to two refreshes, 17-33 ms,
+plus an input read once per frame) is the rest of whatever the true gap is.
+None of that is removable from outside. The levers left are the income
+(25.7k a wave against the emulator's 27-28k) and playing with the latency
+rather than against it; partial-frame consumption on the Magewell (acting
+before the last chunk lands) is the only card-side saving left and is worth
+at most a few ms.
 
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while
