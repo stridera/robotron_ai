@@ -1,4 +1,4 @@
-# Robotron 2084 bot — state of play (updated 2026-09-23)
+# Robotron 2084 bot — state of play (updated 2026-09-24)
 
 A single-page orientation for anyone (or any fresh context) picking this up.
 Facts only; every number below comes from a logged run. The complete history of
@@ -336,6 +336,50 @@ None of that is removable from outside. The levers left are the income
 rather than against it; partial-frame consumption on the Magewell (acting
 before the last chunk lands) is the only card-side saving left and is worth
 at most a few ms.
+
+**Console round 20 (Eric, 2026-09-24, ten games, the round-19 build and
+flags): mean 40.5, record W64; the level is confirmed.** Waves 22, 51, 49,
+40, 33, 49, 64, 31, 32, 34: mean **40.5**, median 37, **W64** the console
+record. Against round 19 (38.1) Welch t = 0.46: the same run twice. The
+twenty games at this latency average 39.3 against round 18's 29.8 (t ~2.4),
+so the low-latency backend moved the console by about ten waves, and the
+rounds 15-16 to round 20 series reads 16.6, 29.8, 39.3. Score per wave 25.4k
+(round 19: 25.7k, round 18: 25.0k). Trace: 149,228 ticks at 57.2 ms, blind
+22.2%, held 3.3%, capture magewell-sdk lowlatency LOCKED 1280x720 59.95,
+pump 59.94 / 56.29 changed. Deaths 288 on the HUD, 435 by the economy
+(game 7: 37 on the HUD, 71 bought). Killers: enforcer bullet 59 (now the
+top), grunt 47, tank shell 35, cruise missile 25, UNSEEN 27% (74; round 19:
+31%); near wall **46%** (round 19: 37%). Reversal split +2 in 25%, +3 in
+67% (+0 5%, +4/+5 4%), unresolved 33/90; pooled with round 19 the +2 share
+is ~30% against round 18's 5%, so the ~15 ms held. Eric deletes each build
+and its output before taking the next, so the round-18 folder cannot be
+re-run for its unresolved count; two rounds at 37-45% unresolved on the same
+build say it is the game (death freezes, players already stationary), not a
+regression, and from this build the report prints a phase-corrected
+estimate (mean of the per-event frame brackets, error = bracket width /
+sqrt(12n)) so a sub-tick change shows without the split: **round 20 ~121 ms
+(±2, n=57), round 19 ~119 (±3, n=36)**; round 18's split (5/92/3) puts it at
+~138 on the same estimator, so the backend is worth ~18 ms on the loop. The
+emulator's Xenia traces have not been run through the estimator yet; its
+"117 / 50" brackets ~83 if every response is at +2, so the honest gap is
+~35-40 ms until that is done.
+
+**What the life economy says about rounds 18-20, and why the next lever is
+not latency.** Deaths per wave by the economy: round 18 1.08, round 19 1.10,
+round 20 1.07. Lives bought per wave (score / 25k): 0.98, 1.03, 1.02. The
+console sits at break-even: each wave it buys one life and loses one, and a
+game ends when the three starting lives have leaked out at the difference,
+which is 0.05-0.10 a wave, i.e. 30-60 waves, which is exactly the spread of
+the last thirty games (11 to 64). The latency cut did not change the death
+rate measurably; it moved the margin by a few hundredths, which at
+break-even is ten waves. The emulator runs the same income at 27-28k (1.1
+bought) and 0.8 deaths a wave, a margin of +0.3, which is why it banks men
+and reaches W100-200. Wave 100 on the console needs the margin at -0.03 or
+better: either +2.5k a wave of income, or 0.1 fewer deaths a wave. Nothing
+in the hardware budget (card 17, pad 11, the 360's own pipeline) is left to
+convert into either; the killer table (enforcer bullets and near-wall deaths
+rising as the games go deeper, UNSEEN steady at 27-31%) is where the deaths
+are, and income is the other half.
 
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while

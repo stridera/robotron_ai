@@ -181,10 +181,20 @@ def reversal_latency(rows, hold_before=3, hold_after=4, max_k=6):
     emulator, so "+3 ticks" there is 171 ms, not 200): `seen_by_ms` is the
     time from the command to the sample in which the response was seen, and
     `not_yet_ms` the time to the sample before it, in which it was not. The
-    true latency lies between the two medians."""
+    true latency lies between the two medians -- but those medians sit on
+    the tick grid and cannot move for a sub-tick latency change. `estimate_ms`
+    is a phase-corrected point estimate: for each resolved event the true
+    latency lies in the bracket (not_yet_ms, seen_by_ms], uniformly (we don't
+    know the phase of the command within the tick); its midpoint is an
+    unbiased per-event estimate, and the mean of those midpoints (not the
+    median -- the median is what's stuck on the grid) moves smoothly with
+    the true latency. `estimate_err_ms` is the standard error of that mean:
+    each bracket is a uniform(width) random variable around the midpoint,
+    which has variance width^2/12, so the mean of n such midpoints has
+    standard error mean(width)/sqrt(12*n)."""
     hist = Counter()
     n = unresolved = 0
-    seen_by, not_yet = [], []
+    seen_by, not_yet, brackets = [], [], []
     for i in range(hold_before, len(rows) - hold_after - max_k):
         a, b = rows[i - 1].get('move'), rows[i].get('move')
         if a not in OPP or OPP[a] != b:
@@ -215,17 +225,32 @@ def reversal_latency(rows, hold_before=3, hold_after=4, max_k=6):
             s_hi = rows[i + found].get('sampled_at')
             s_lo = rows[i + found - 1].get('sampled_at')
             if t_cmd is not None and s_hi is not None:
-                seen_by.append((s_hi - t_cmd) * 1000.0)
+                seen_ms = (s_hi - t_cmd) * 1000.0
+                seen_by.append(seen_ms)
                 if s_lo is not None:
-                    not_yet.append((s_lo - t_cmd) * 1000.0)
+                    not_yet_ms_v = (s_lo - t_cmd) * 1000.0
+                    not_yet.append(not_yet_ms_v)
+                    brackets.append((not_yet_ms_v, seen_ms))
     tot = sum(hist.values())
     ks = sorted(k for k in hist for _ in range(hist[k]))
+    if brackets:
+        mids = [(lo + hi) / 2.0 for lo, hi in brackets]
+        widths = [hi - lo for lo, hi in brackets]
+        mean_mid = st.mean(mids)
+        mean_width = st.mean(widths)
+        estimate_ms = mean_mid
+        estimate_err_ms = mean_width / math.sqrt(12 * len(brackets))
+    else:
+        estimate_ms = estimate_err_ms = None
     return dict(reversals=n, unresolved=unresolved,
                 median=ks[len(ks) // 2] if ks else None,
                 histogram={str(k): dict(n=hist[k], frac=round(hist[k] / tot, 3))
                            for k in sorted(hist)} if tot else {},
                 seen_by_ms=round(st.median(seen_by)) if seen_by else None,
-                not_yet_ms=round(st.median(not_yet)) if not_yet else None)
+                not_yet_ms=round(st.median(not_yet)) if not_yet else None,
+                estimate_ms=estimate_ms,
+                estimate_err_ms=estimate_err_ms,
+                estimate_n=len(brackets))
 
 
 # ── games, waves, deaths ──────────────────────────────────────────────────
@@ -471,6 +496,9 @@ def format_report(rep):
             L.append(f"  in ms: response seen by {rl['seen_by_ms']} ms, not yet at "
                      f"{rl['not_yet_ms']} ms (true latency between the two; the "
                      f"emulator reads 117 / 50; compare rigs in ms, ticks differ)")
+        if rl.get('estimate_ms') is not None:
+            L.append(f"  estimate: ~{rl['estimate_ms']:.0f} ms (mean of the per-event "
+                     f"frame brackets, ±{rl['estimate_err_ms']:.0f}; n={rl['estimate_n']})")
     if rep['games']:
         L.append("games:")
         for g in rep['games']:
