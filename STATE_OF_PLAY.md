@@ -380,6 +380,32 @@ in the hardware budget (card 17, pad 11, the 360's own pipeline) is left to
 convert into either; the killer table (enforcer bullets and near-wall deaths
 rising as the games go deeper, UNSEEN steady at 27-31%) is where the deaths
 are, and income is the other half.
+**Handoff to the console operator (2026-09-30).** Strider is done testing
+on his machine; Eric runs sessions and judges them himself, Strider analyses
+on request and makes code changes on request. Built for that: `--tag` and
+`--sessions-dir` (per-session folders `<dir>/<stamp>_<tag>`, default
+`logs/sessions`; pointed outside the build folder they survive Eric's
+build-and-delete habit; the tag is in `report.json` and the wave log;
+rig calibration stays in `logs/hardware_report`), `--knob NAME=VALUE`
+and a config `"knobs"` block (applied in `__main__` BEFORE the engine is
+imported, since the engine reads its knobs at import; `knobs.py` is the
+registry and `--list-knobs` prints defaults, the value in force on the
+vision path following brain.py's pinning rules, and the meaning),
+`report.json` now carries the effective config, knobs and pinned list, and
+`tools/compare_sessions.py` pools sessions by tag and gives per-arm mean /
+median max wave, economy deaths per wave, points per wave, NET, and per
+comparison the mean-wave and NET differences with bootstrap 95% intervals,
+Welch p, and the knobs that differed. `docs/ERIC_HANDOFF.md` is the
+protocol (tag, ten games an arm, alternate arms, one change, judge with the
+tool, NET men per wave as the number that must move) and the ordered
+candidate list with priors, all aimed at the break-even margin now that the
+hardware budget is spent: `--lag-ticks` 1.0 / 1.3 (entity lead tuned on a
+fresher picture); margins 24/14 (uncertainty grows with latency; enforcer
+bullets and near-wall deaths are the growing killers); `--eye-sync 40`;
+`FSM_BRAIN_RESCUE_MULT` 1.3 for the income half; fire-alt radius 250;
+`--conf` 0.25 / 0.35. Not recommended: player lead, imgsz 640, anything on
+the capture side, the 5g closed list. `compare_sessions --trace` prints the
+phase-corrected loop latency alongside the bracket figures.
 
 **Console round 14 (Eric, Sept 11, five games, current shipping config):**
 W9, W9, W22, W9, W11 — the same band as rounds 12-13 (W12/9/12/9/9), while

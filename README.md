@@ -249,7 +249,11 @@ Every flag has a sensible per-mode default; you usually only need `--mode` (plus
 | `--visualize` / `--show-overlay` | off | Live annotated overlay window (see below) |
 | `--simulate` | off | Don't open real devices — print output (testing) |
 | `--debug` | off | Verbose per-tick output |
-| `--config FILE` | — | JSON of defaults; command-line flags still win |
+| `--config FILE` | — | JSON of defaults; command-line flags still win. A `"knobs"` object in it sets engine knobs |
+| `--tag NAME` | — | Hardware: names the session; goes into the folder name (`logs/sessions/<stamp>_<tag>`), `report.json` and the wave log, so an A/B is labelled at the source |
+| `--sessions-dir DIR` | `logs/sessions` | Hardware: where session folders go. Point it outside the build folder (e.g. `C:\robotron_sessions`) so sessions survive taking a new build |
+| `--knob NAME=VALUE` | — | Set an engine knob (planner / FSM constant) for this run; repeatable. Beats the config file's `"knobs"` block |
+| `--list-knobs` | — | Print every engine knob with its default, the value in force and its meaning, then exit |
 
 Vision-path behaviour applied automatically (each individually A/B-validated;
 override with the matching env var only if you're experimenting):
@@ -365,7 +369,9 @@ That fixed the scoreboard reader and the capture flags, but could not say
 why the console plays waves 9-12 while the emulator plays wave 30 with the
 same code (2026-09-14: at equal waves the console loses lives ~1.5-1.8x as
 fast, with identical score income, and none of the summary numbers differ).
-So the hardware loop now records, into the same `hardware_report` folder:
+So the hardware loop now records, into the session's folder
+(`logs/sessions/<stamp>_<tag>`, one per run, never overwritten; the rig
+calibration alone stays in `logs/hardware_report/` so the next run finds it):
 
 - `decisions.jsonl` — one line per decision tick: timestamps, the player and
   every entity in planner pixels, the projectile tracks the brain coasted,
@@ -384,7 +390,14 @@ So the hardware loop now records, into the same `hardware_report` folder:
 Analyse a returned folder with:
 
 ```
-.venv\Scripts\python -m robotron_ai.trace_report robotron_ai\logs\hardware_report
+.venv\Scripts\python -m robotron_ai.trace_report robotron_ai\logs\sessions\<folder> --waves 40
+```
+
+and compare two or more sessions (pooled by tag, baseline first, with
+confidence intervals and the knobs that differed) with:
+
+```
+.venv\Scripts\python -m robotron_ai.tools.compare_sessions logs\sessions\*_base logs\sessions\*_candidate
 ```
 
 It prints loop cadence and blind/held fractions; the player's speed along
@@ -463,6 +476,24 @@ it; the file overrides only the built-in defaults.
 .venv\Scripts\python -m robotron_ai --config myrig.json
 ```
 
+A `"knobs"` object in the file sets engine knobs (planner and FSM constants)
+for the run, the same as `--knob NAME=VALUE` on the command line:
+
+```json
+{"mode": "hardware", "port": "COM4", "capture_res": "1280x720",
+ "knobs": {"VSEARCH_CLEAR_DANGER": "24", "VSEARCH_CLEAR_MARGIN": "14"}}
+```
+
+### Tuning it yourself
+
+Every setting that changes play is either a flag in the table above or an
+engine knob (`--list-knobs` shows them all with the value in force and what
+they mean). Run each arm with a `--tag`, ten games at a time, alternating
+arms across sessions, and judge with `tools/compare_sessions.py`. The
+protocol, the traps, and an ordered list of what is worth trying on the
+console are in [docs/ERIC_HANDOFF.md](docs/ERIC_HANDOFF.md); what has
+already been measured and closed is in STATE_OF_PLAY.md section 5g.
+
 ### Live visualization (`--visualize`)
 
 See what the bot sees, in real time. Adds a window showing the game feed with:
@@ -526,12 +557,18 @@ robotron_ai/
   harness.py      TickClock + memory game loop (Xenia) + vision loop (hardware) + menu nav
   visualize.py    live annotated overlay window (--visualize)
   hud_ocr.py      HUD OCR: score/wave/lives off the video feed + bookkeeping
+  knobs.py        engine knob registry: --knob / config "knobs" -> environment before the engine loads; --list-knobs
+  magewell.py     capture through Magewell's SDK (--capture-backend magewell), the card's low-latency mode
+  telemetry.py    hardware report: per-session folders (logs/sessions/<stamp>_<tag>), report.json, rig calibration
+  trace.py        per-tick decision trace + death windows;  trace_report.py reads a session folder
+  tools/          measurement and analysis: capture/control latency, compare_sessions (A/B verdicts), pad tools
   coords.py       coordinate transforms (game <-> screen px <-> planner px)
   weights/        bundled YOLO detector (robotron.pt — yolo6) + HUD font (hud_font.npz)
   engine/         the proven, tuned libraries (readers, FSM, planner) — not rewritten
   docs/           game internals (enemy model, Xenia memory, disassembly pointer) + archived research
   WHAT_WE_TRIED.md  every idea tried so far and what happened (read before proposing changes)
   STATE_OF_PLAY.md  engineering state: shipping config, experiment ledgers, open directions
+  docs/ERIC_HANDOFF.md  running experiments on the console yourself: protocol, knobs, what to try
 ```
 
 The `engine/` modules are the byte-for-byte MAME-parity readers, the evolved

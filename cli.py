@@ -51,7 +51,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mode", choices=["xenia", "hardware"], default="xenia",
                    help="target environment preset")
     p.add_argument("--config", default=None,
-                   help="JSON file of defaults (command-line flags still win)")
+                   help="JSON file of defaults (command-line flags still win); a "
+                        "\"knobs\" object in it sets engine knobs (see --list-knobs)")
+    p.add_argument("--tag", default=None,
+                   help="name for this session: goes into the report folder name "
+                        "(logs/sessions/<stamp>_<tag>), report.json and the wave log, "
+                        "so an A/B is labelled at the source")
+    p.add_argument("--sessions-dir", default=None, metavar="DIR",
+                   help="where session folders go (default logs/sessions inside the "
+                        "package). Point it OUTSIDE the build folder, e.g. "
+                        "C:\\robotron_sessions, so sessions survive taking a new build")
+    p.add_argument("--knob", action="append", default=[], metavar="NAME=VALUE",
+                   help="set an engine knob for this run (repeatable), e.g. "
+                        "--knob VSEARCH_CLEAR_DANGER=24; --list-knobs shows them")
+    p.add_argument("--list-knobs", action="store_true",
+                   help="print every engine knob with its default, current value "
+                        "and meaning, then exit")
 
     io = p.add_argument_group("input / output")
     io.add_argument("--input", choices=["memory", "yolo"], default=None,
@@ -327,6 +342,10 @@ def _build_perception(cfg):
 
 def main(argv=None) -> None:
     cfg = resolve_config(argv)
+    if cfg.list_knobs:
+        from . import knobs as knobs_mod
+        print(knobs_mod.describe(vision=(cfg.input == "yolo")))
+        return
     if cfg.probe_capture:
         # Measurement only: no game, no controller, no model. Prints the
         # ranked capture configurations and the flags to use.
@@ -373,12 +392,21 @@ def main(argv=None) -> None:
             # (act latency, cadence, capture pacing, detection/HUD health,
             # geometry) without them needing to know what any of it means.
             from .engine.clearance_planner import DXY
-            from .telemetry import HardwareTelemetry
-            telemetry = HardwareTelemetry(DXY)
+            from .telemetry import HardwareTelemetry, session_dir
+            from . import knobs as knobs_mod
+            if cfg.tag:
+                os.environ.setdefault("ROBOTRON_ARM", cfg.tag)   # wave-log label
+            out_dir = session_dir(cfg.tag, root=cfg.sessions_dir) if cfg.sessions_dir else None
+            telemetry = HardwareTelemetry(DXY, out_dir=out_dir, tag=cfg.tag,
+                                          config=knobs_mod.config_dict(cfg),
+                                          knobs=knobs_mod.current_values(vision=True))
+            telemetry.knobs_pinned = sorted(knobs_mod.pinned(os.environ))
+            print(f"[cli] session folder: {telemetry.out}"
+                  + (f"  (tag {cfg.tag})" if cfg.tag else "  (no --tag)"))
             # Rig calibration: a previous run's reversal-measured loop latency
             # is printed for the operator. It is NOT applied to the lead:
             # round 16's console A/B (lead 1.5 vs 2.5) found no effect.
-            cal = HardwareTelemetry.load_calibration(telemetry.out)
+            cal = HardwareTelemetry.load_calibration(telemetry.home)
             if cal:
                 print(f"[cli] rig calibration: reversal latency "
                       f"{cal['reversal_median_ticks']} ticks "

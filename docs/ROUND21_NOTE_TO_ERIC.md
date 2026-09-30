@@ -66,3 +66,15 @@ If you want to keep the rig busy in the meantime, the same flags as rounds
 ```
 --capture-backend magewell --magewell-mode lowlatency --capture-res 1280x720
 ```
+
+## Added 2026-09-30: the experiments move to your machine
+
+This build puts the whole experiment loop on your side: every session gets
+its own tagged folder (`--tag base`, and `--sessions-dir C:\robotron_sessions`
+so they survive taking a new build), every planner and FSM knob can be set
+from the command line (`--list-knobs`, `--knob NAME=VALUE`), and
+`tools/compare_sessions.py` gives a verdict on two arms with a confidence
+interval and the knobs that differed. `docs/ERIC_HANDOFF.md` is the page:
+the protocol, the traps, and an ordered list of what I think is worth trying
+now that the hardware budget is spent, with my honest prior on each. Rounds
+19 and 20 are your baseline; run everything against them, tagged `base`.

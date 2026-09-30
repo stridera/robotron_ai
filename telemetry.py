@@ -43,6 +43,17 @@ import numpy as np
 
 _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(_PKG_DIR, "logs", "hardware_report")
+SESSIONS_DIR = os.path.join(_PKG_DIR, "logs", "sessions")
+
+
+def session_dir(tag=None, when=None, root=None):
+    """logs/sessions/<YYYYmmdd_HHMM>[_<tag>]: one folder per run, never
+    reused, so an operator can keep every session and compare them
+    (tools/compare_sessions.py). The tag is whatever --tag said, made safe
+    for a folder name."""
+    stamp = time.strftime("%Y%m%d_%H%M", time.localtime(when))
+    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in (tag or "")).strip("_")
+    return os.path.join(root or SESSIONS_DIR, stamp + (f"_{safe}" if safe else ""))
 
 
 class ActEstimator:
@@ -178,8 +189,17 @@ class HardwareTelemetry:
     SAMPLE_FRAMES = {"first_good": None, "hud_unreadable": None,
                      "player_blind": None}
 
-    def __init__(self, dxy, out_dir=None):
-        self.out = out_dir or DEFAULT_DIR
+    def __init__(self, dxy, out_dir=None, tag=None, config=None, knobs=None):
+        """`out_dir` None = a fresh per-session folder (see session_dir), so
+        sessions never overwrite each other; `tag` names it and is written
+        into the report; `config` (the effective CLI settings) and `knobs`
+        (the engine environment knobs) go into report.json so a folder says
+        exactly what produced it."""
+        self.tag = tag
+        self.config = config
+        self.knobs = knobs
+        self.home = DEFAULT_DIR                 # rig calibration lives here
+        self.out = out_dir or session_dir(tag)
         os.makedirs(self.out, exist_ok=True)
         self.t0 = time.time()
         self.act = ActEstimator(dxy)
@@ -331,6 +351,10 @@ class HardwareTelemetry:
             "started_utc": time.strftime("%Y-%m-%d %H:%M:%S",
                                          time.gmtime(self.t0)),
             "elapsed_s": round(el, 1),
+            "tag": self.tag,
+            "config": self.config,
+            "knobs": self.knobs,
+            "knobs_pinned": getattr(self, "knobs_pinned", None),
             "act_ticks": self.act.stats(),
             "reversal_ticks": self.reversal.stats(),
             "frames": {
@@ -376,11 +400,15 @@ class HardwareTelemetry:
                    reversal_median_ticks=st['median'], reversal_samples=st['n'],
                    reversal_histogram=st.get('histogram'),
                    player_lead=player_lead)
-        try:
-            with open(os.path.join(self.out, self.CALIBRATION), "w") as f:
-                json.dump(cal, f, indent=1)
-        except OSError:
-            return None
+        # Into this session's folder (so the package carries it) and into
+        # the rig's home folder (so the next session finds it).
+        for d in {self.out, self.home}:
+            try:
+                os.makedirs(d, exist_ok=True)
+                with open(os.path.join(d, self.CALIBRATION), "w") as f:
+                    json.dump(cal, f, indent=1)
+            except OSError:
+                pass
         return cal
 
     @staticmethod
