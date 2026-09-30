@@ -1,6 +1,7 @@
 """Tests for the capture-chain tool's pure parts (no hardware)."""
 import importlib.util
 from pathlib import Path
+import sys
 import unittest
 
 import numpy as np
@@ -171,7 +172,8 @@ class DiagnosticsTest(unittest.TestCase):
         for key in ("when", "python", "os", "opencv", "numpy",
                     "dpi_awareness", "desktop_locked", "monitors"):
             self.assertIn(key, env)
-        self.assertTrue(env["monitors"])
+        if sys.platform == "win32":
+            self.assertTrue(env["monitors"])     # elsewhere the block is a stub
         for m in env["monitors"]:
             for key in ("device", "width", "height", "refresh_hz", "primary"):
                 self.assertIn(key, m)
