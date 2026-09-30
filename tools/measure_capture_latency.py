@@ -597,19 +597,27 @@ def desktop_locked():
 
 def environment(chosen=None):
     """Everything needed to interpret a run sent back from another machine."""
+    windows = sys.platform == "win32"
     env = dict(
         when=datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         python=sys.version.split()[0],
         os=f"{platform.system()} {platform.release()} {platform.version()}",
         machine=platform.machine(),
         numpy=getattr(np, "__version__", None),
-        desktop_locked=desktop_locked(),
+        desktop_locked=desktop_locked() if windows else False,
     )
     try:
         import cv2
         env["opencv"] = cv2.__version__
     except Exception as e:
         env["opencv"] = f"unavailable ({e})"
+    if not windows:
+        # The tool itself is Windows-only (GDI screen reads, DirectShow); the
+        # environment block still has to be buildable elsewhere so the tests
+        # and the report readers run on the analysis server.
+        env["dpi_awareness"] = "n/a (not Windows)"
+        env["monitors"] = []
+        return env
     # DPI awareness decides whether Windows reports and accepts physical or
     # scaled pixels. If this is not per-monitor, a full-screen window on a
     # scaled display will not actually cover the monitor.
