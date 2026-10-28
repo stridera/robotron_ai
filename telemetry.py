@@ -423,7 +423,7 @@ class HardwareTelemetry:
         return None
 
     def finalize(self, tick_stats=None, center_off=None, capture_stats=None,
-                 player_lead=None):
+                 player_lead=None, decision_trace=None):
         if self._finalized:
             return
         self._finalized = True
@@ -433,6 +433,8 @@ class HardwareTelemetry:
         rep = self.report()
         if tick_stats:
             rep["tick"] = tick_stats
+        if decision_trace:
+            rep["decision_trace"] = decision_trace    # incl. truncated / error
         if center_off is not None:
             rep["box_center_offset_px"] = [round(v, 2) for v in center_off]
         path = os.path.join(self.out, "report.json")

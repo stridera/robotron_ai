@@ -30,6 +30,7 @@ reported in the summary; the game loop never sees an exception):
 
 Offline analysis: `python -m robotron_ai.trace_report <dir>` (trace_report.py).
 """
+import gzip
 import json
 import os
 import queue
@@ -50,22 +51,52 @@ def _compact_tracks(tracks):
     return out
 
 
-class DecisionTrace:
-    """Bounded JSONL recorder of every decision tick (see module doc)."""
-    SCHEMA = "robotron_ai.decision_trace.v1"
-    FILENAME = "decisions.jsonl"
+PLAIN_NAME = "decisions.jsonl"          # sessions before 2026-10-27
+GZ_NAME = PLAIN_NAME + ".gz"
 
-    def __init__(self, out_dir, max_bytes=256 * 1024 * 1024):
+
+def decision_path(folder):
+    """The decision trace file in a session folder: the gzip one if present,
+    else the plain one (older sessions; also the path a missing trace is
+    reported against)."""
+    gz = os.path.join(folder, GZ_NAME)
+    return gz if os.path.exists(gz) else os.path.join(folder, PLAIN_NAME)
+
+
+def iter_decision_lines(folder):
+    """Yield the raw text lines of a session's decision trace, whichever
+    form it is in. A gzip stream cut short (the process died before close)
+    yields what was recoverable instead of raising."""
+    path = decision_path(folder)
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8") as f:
+        try:
+            for line in f:
+                yield line
+        except (EOFError, OSError, gzip.BadGzipFile):
+            return
+
+
+class DecisionTrace:
+    """Recorder of every decision tick (see module doc). Gzip-compressed
+    (~10x smaller): the old 256 MB plain-text cap dropped the last games of
+    a 20-game deep session (2026-10-27 screen: 3 of 6 sessions). The cap is
+    now on the uncompressed size and far above any session; if it is ever
+    hit it is announced and recorded in the summary."""
+    SCHEMA = "robotron_ai.decision_trace.v1"
+    FILENAME = GZ_NAME
+
+    def __init__(self, out_dir, max_bytes=4 * 1024 * 1024 * 1024):
         self.out_dir = out_dir
         self.path = os.path.join(out_dir, self.FILENAME)
         self.max_bytes = int(max_bytes)
         self.summary = dict(schema=self.SCHEMA, ticks=0, written=0, bytes=0,
                             blind_ticks=0, held_ticks=0, truncated=False,
-                            error=None, seconds=0.0)
+                            truncated_at_tick=None, error=None, seconds=0.0)
         self._f = None
         try:
             os.makedirs(out_dir, exist_ok=True)
-            self._f = open(self.path, "w", encoding="utf-8")
+            self._f = gzip.open(self.path, "wt", encoding="utf-8", compresslevel=3)
         except OSError as e:
             self.summary['error'] = repr(e)
 
@@ -104,6 +135,10 @@ class DecisionTrace:
             size = len(line.encode('utf-8'))
             if s['bytes'] + size > self.max_bytes:
                 s['truncated'] = True
+                s['truncated_at_tick'] = s['ticks']
+                print(f"[trace] WARNING: decision trace hit its {self.max_bytes / 2**20:g} MB "
+                      f"cap at tick {s['ticks']} - later ticks are NOT recorded",
+                      flush=True)
                 return
             self._f.write(line)
             s['bytes'] += size

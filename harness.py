@@ -18,6 +18,48 @@ from .engine import clearance_planner as _cp
 from .visualize import VizOverlay, dir_name
 
 
+# ── tick-denominated durations ────────────────────────────────────────────
+# The decision tick is ~57.1 ms on the console at the default eye-sync (55 ms
+# floor, 17.5 Hz). Every duration the loop counts in TICKS — the entity lag and
+# player lead extrapolation, hold-action, the player-box hold, the projectile
+# coaster's TTL — was tuned at that tick, so at --eye-sync 40 (~43 ms) they
+# shrank ~25% in real time and confounded the test. They are held at their
+# 57.1 ms wall-clock length by scaling with REF_TICK_S / tick. (The planner's
+# own rescale — set_tick_scale — covers kinematics per step, relative to
+# 66.7 ms; it does not touch these.) Exactly 1.0 at the reference tick, so the
+# default behaviour is unchanged to the bit.
+REF_TICK_S = 0.0571
+EYE_SYNC_OVERHEAD_S = 0.0021    # measured: a 55 ms eye-sync floor gives a 57.1 ms tick
+
+
+def nominal_tick_s(hz, eye_sync_ms=0.0):
+    """Expected decision tick before anything is measured."""
+    return eye_sync_ms / 1000.0 + EYE_SYNC_OVERHEAD_S if eye_sync_ms > 0 else 1.0 / hz
+
+
+def duration_scale(tick_s):
+    """Factor that keeps a tick-count duration at its reference wall-clock length."""
+    s = min(max(REF_TICK_S / float(tick_s), 0.5), 2.0)
+    return 1.0 if abs(s - 1.0) < 1e-3 else s
+
+
+def scale_ticks(value, s, whole=False):
+    """`value` ticks at the reference tick -> ticks at scale `s` (whole=True
+    rounds, never below 1 unless the feature is off, i.e. value 0)."""
+    if s == 1.0 or not value:
+        return value
+    v = value * s
+    return max(1, int(round(v))) if whole else v
+
+
+def scaled_durations(s, lag, lead, hold_action, player_hold, coaster_ttl=None):
+    """The tick-count durations at scale `s` (what the loop applies)."""
+    return dict(lag_ticks=scale_ticks(lag, s), player_lead=scale_ticks(lead, s),
+                hold_action=scale_ticks(hold_action, s, whole=True),
+                player_hold=scale_ticks(player_hold, s, whole=True),
+                coaster_ttl=scale_ticks(coaster_ttl, s))
+
+
 class TickClock:
     """Deadline-scheduled decision clock with measured-rate feedback
     (ported from the dev tree, 2026-07-28 — measured 15.0 Hz with 0 overruns
@@ -53,6 +95,7 @@ class TickClock:
         self.periods = deque(maxlen=900)
         self._warned = 0.0
         self._applied = 1.0
+        self.ref_scale = 1.0          # tick-count duration scale (duration_scale)
         self._last_adapt = 0
         if adapt:
             _cp.set_tick_scale(1.0)   # fresh clock -> start from nominal
@@ -113,6 +156,9 @@ class TickClock:
             self._last_adapt = self.n
             recent = sorted(list(self.periods)[-self.ADAPT_WINDOW:])
             k = recent[len(recent) // 2] / self.nominal
+            rs = duration_scale(recent[len(recent) // 2])
+            if abs(rs - self.ref_scale) > self.ADAPT_DEADBAND:
+                self.ref_scale = rs
             if abs(k - self._applied) > self.ADAPT_DEADBAND:
                 self._applied = _cp.set_tick_scale(k)
                 print(f"[tick] sustained cadence {1.0 / (k * self.nominal):.1f} Hz "
@@ -514,6 +560,52 @@ def auto_lead_target(median_ticks, from_reversal):
     return min(max(float(median_ticks) + 0.5, 0.5), 2.5)
 
 
+class TickDurations:
+    """Applies the tick-count durations at a given duration_scale to the brain
+    (lag, lead, coaster TTL), the hold-action count and, on the un-threaded
+    eye, the player-box hold. With the threaded eye (eye-sync) the player-box
+    hold counts EYE frames, whose rate eye-sync does not change, so it is left
+    alone. An auto-lead value was measured in ticks of the live cadence, so
+    once it has set the lead the lead is not scaled again."""
+
+    def __init__(self, brain, perception, hold_action):
+        self.brain, self.perception = brain, perception
+        coaster = getattr(brain, 'coaster', None)
+        self.base = dict(lag=brain.lag_ticks, lead=brain.player_lead_ticks,
+                         hold=hold_action,
+                         ttl=None if coaster is None else coaster.ttl,
+                         phold=None if hasattr(perception, 'wait_new')
+                         else getattr(perception, 'max_player_hold', None))
+        self.scale = 1.0
+        self.hold_action = hold_action
+        self.lead_auto = False
+
+    def apply(self, s):
+        """True if anything changed."""
+        if s == self.scale:
+            return False
+        self.scale, b = s, self.base
+        d = scaled_durations(s, b['lag'], b['lead'], b['hold'], b['phold'], b['ttl'])
+        self.brain.lag_ticks = d['lag_ticks']
+        if not self.lead_auto:
+            self.brain.player_lead_ticks = d['player_lead']
+        if b['ttl'] is not None:
+            self.brain.coaster.ttl = d['coaster_ttl']
+        self.hold_action = d['hold_action']
+        if b['phold'] is not None:
+            self.perception.max_player_hold = d['player_hold']
+        return True
+
+    def describe(self):
+        b = self.brain
+        return (f"lag {b.lag_ticks:.2f} lead {b.player_lead_ticks:.2f} "
+                f"hold-action {self.hold_action}"
+                + (f" player-hold {self.perception.max_player_hold}"
+                   if self.base['phold'] is not None else "")
+                + ("" if self.base['ttl'] is None else
+                   f" coaster-ttl {b.coaster.ttl:.1f}"))
+
+
 # ── Hardware game loop (vision only, no memory) ─────────────────────────────
 def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                      start_seq: bool = False, debug: bool = False,
@@ -537,6 +629,11 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     log robotron/ab_yolo.py can analyse — the same bookkeeping the emulator
     gets from guest RAM, minus nothing the tuning loop needs."""
     clock = TickClock(hz=hz)
+    # Tick-count durations at the expected tick (the measured one refines it).
+    durations = TickDurations(brain, perception, hold_action)
+    clock.ref_scale = duration_scale(nominal_tick_s(
+        hz, eye_sync_ms if hasattr(perception, "wait_new") else 0.0))
+    durations.apply(clock.ref_scale)
     if hud_reader is not None:
         # Vision-guarded navigation: senses before pressing anything. Runs
         # even without --start — it's a no-op when a game is already on.
@@ -560,9 +657,14 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
     games_done = 0
     prev_go = False
     nav_fails = 0       # consecutive failed recoveries -> escalate to escape
+    trace_summary = None
     try:
         while True:
             n += 1
+            if clock.ref_scale != durations.scale and durations.apply(clock.ref_scale):
+                print(f"[tick] decision tick ~{REF_TICK_S / clock.ref_scale * 1e3:.0f} ms "
+                      f"- tick-count durations x{clock.ref_scale:.2f}: "
+                      f"{durations.describe()}", flush=True)
             # AUTO-LEAD (hardware round 2): the actuation latency in TICKS
             # depends on the cadence this rig actually achieves (200 ms is 2
             # ticks at 10 Hz but 3 at 15), so a fixed default is only right
@@ -603,6 +705,7 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                                   f"-> player-lead {want:.2f} (was "
                                   f"{brain.player_lead_ticks:.2f})")
                             brain.player_lead_ticks = want
+                            durations.lead_auto = True
             obs = perception.perceive(None)
             frame = getattr(perception, "last_frame", None)
             if telemetry is not None:
@@ -665,7 +768,8 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                 blind += 1
                 if obs.entities:
                     brain.blind_tick(obs.entities)   # keep tracks ageing
-                if hold_action and last_cmd is not None and blind <= hold_action:
+                if (durations.hold_action and last_cmd is not None
+                        and blind <= durations.hold_action):
                     # Hold-action: keep the last command through a blink
                     # instead of snapping to a standstill.
                     controller.move_shoot(*last_cmd)
@@ -723,6 +827,8 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
             try:
                 s = trace.close()
                 d = s.get('decisions') or {}
+                trace_summary = {k: d.get(k) for k in
+                                 ('ticks', 'written', 'truncated', 'truncated_at_tick', 'error')}
                 r = s.get('deaths') or {}
                 print(f"[trace] {d.get('written', 0)} decision ticks, "
                       f"{r.get('events', 0)} death windows "
@@ -737,4 +843,5 @@ def play_vision_game(brain, perception, controller, *, hz: float = 15.0,
                                center_off=getattr(perception,
                                                   'center_measured', None),
                                capture_stats=cap_stats,
-                               player_lead=getattr(brain, 'player_lead_ticks', None))
+                               player_lead=getattr(brain, 'player_lead_ticks', None),
+                               decision_trace=trace_summary)

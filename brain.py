@@ -120,6 +120,9 @@ class VelocityTracker:
         return out
 
 
+COASTER_TTL = 3.0   # decision ticks a missed projectile track is coasted (loop rescales it)
+
+
 class ProjectileCoaster:
     """Track-and-coast layer for fast projectiles on the VISION path (ported
     from robotron/brain_yolo.py, 2026-07-08 — the change that took the vision
@@ -144,7 +147,7 @@ class ProjectileCoaster:
     VMAX = 130.0   # px/tick velocity clamp (mirrors VelocityTracker.VMAX)
     ALPHA = 0.5    # velocity EMA
 
-    def __init__(self, ttl: float = 3.0, turn: float = 0.0):
+    def __init__(self, ttl: float = COASTER_TTL, turn: float = 0.0):
         self.ttl = ttl
         self.turn = turn
         self.tracks = []   # dicts: x,y coasted pos; lx,ly last-seen; vx,vy; name; miss

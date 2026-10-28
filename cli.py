@@ -340,6 +340,39 @@ def _build_perception(cfg):
     return vp
 
 
+def startup_block(cfg, environ=None):
+    """The effective settings of this run, as a few console lines (the
+    session's report.json carries the same, but the console never said)."""
+    from . import knobs as knobs_mod
+    env = os.environ if environ is None else environ
+    vision = cfg.input == "yolo"
+    L = [f"[cli] settings: tag={cfg.tag or '-'} sessions={cfg.sessions_dir or 'default'} "
+         f"port={cfg.port or '-'} conf={cfg.conf} eye-sync={cfg.eye_sync:g} ms"]
+    if vision and cfg.source == "hdmi":
+        cap = cfg.capture_backend + (f"/{cfg.magewell_mode}" if cfg.capture_backend == "magewell" else "")
+        L[0] += f" capture={cap} res={cfg.capture_res or 'default'}"
+    threaded = bool(vision and (cfg.eye_sync or getattr(cfg, "threaded_eye", False)))
+    tick = harness.nominal_tick_s(cfg.hz, cfg.eye_sync if vision else 0.0)
+    s = harness.duration_scale(tick)
+    d = harness.scaled_durations(s, cfg.lag_ticks, cfg.player_lead, cfg.hold_action,
+                                 cfg.player_hold, brain_mod.COASTER_TTL)
+    L.append(f"[cli] tick-count durations at the expected {tick * 1e3:.1f} ms tick "
+             f"(x{s:.2f} vs the {harness.REF_TICK_S * 1e3:.1f} ms reference; refined live): "
+             f"lag={d['lag_ticks']:.2f} lead={d['player_lead']:.2f} hold-action={d['hold_action']} "
+             f"player-hold={cfg.player_hold if threaded else d['player_hold']} "
+             f"coaster-ttl={d['coaster_ttl']:.1f}"
+             + (" (player-hold counts eye frames: not scaled)" if threaded else ""))
+    pin = knobs_mod.pinned(env)
+    eff = knobs_mod.effective_values(env, vision)
+    L.append("[cli] knobs pinned: " + (" ".join(f"{k}={eff.get(k, env.get(k))}" for k in sorted(pin))
+                                       if pin else "none"))
+    diff = [f"{k}={v}" for k, v in eff.items()
+            if v != knobs_mod.REGISTRY.get(k, (None,))[0] and k not in pin]
+    if diff:
+        L.append("[cli] other non-default effective knobs (vision defaults): " + " ".join(diff))
+    return L
+
+
 def main(argv=None) -> None:
     cfg = resolve_config(argv)
     if cfg.list_knobs:
@@ -359,6 +392,7 @@ def main(argv=None) -> None:
           f"source={cfg.source if cfg.input == 'yolo' else '-'} "
           f"lag={cfg.lag_ticks} lead={cfg.player_lead} "
           f"frame_sync={cfg.frame_sync}")
+    print("\n".join(startup_block(cfg)), flush=True)
 
     brain = brain_mod.ChampionBrain(
         lag_ticks=cfg.lag_ticks, player_lead_ticks=cfg.player_lead,

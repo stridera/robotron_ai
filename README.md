@@ -373,11 +373,12 @@ So the hardware loop now records, into the session's folder
 (`logs/sessions/<stamp>_<tag>`, one per run, never overwritten; the rig
 calibration alone stays in `logs/hardware_report/` so the next run finds it):
 
-- `decisions.jsonl` — one line per decision tick: timestamps, the player and
+- `decisions.jsonl.gz` (gzip; older sessions have plain `decisions.jsonl`, the readers take either) — one line per decision tick: timestamps, the player and
   every entity in planner pixels, the projectile tracks the brain coasted,
   the command sent, blind/held flags, and the scoreboard's view (score,
   wave, lives, deaths, game id). Recording happens after the command is sent,
-  so it never delays actuation. Bounded at 256 MB.
+  so it never delays actuation. Cap is 4 GB uncompressed (a 20-game session is ~320 MB);
+  if it is ever hit, the console warns and `trace_summary.json` / `report.json` say `truncated`.
 - `deaths/<game>_dNN_wWW/` — for each death the scoreboard reports, the
   previous 4.5 s of frames plus 1 s after, as JPEGs with an index
   (`index.jsonl`: per-frame time, player, command, HUD state) and

@@ -3,6 +3,7 @@
 Run from the package's parent directory:
     python -m unittest robotron_ai.tests.test_trace -v
 """
+import gzip
 import json
 import os
 import shutil
@@ -29,7 +30,8 @@ class FakeBookkeeper:
 
 
 def _jsonl(path):
-    with open(path, encoding='utf-8') as f:
+    opener = gzip.open if path.endswith('.gz') else open
+    with opener(path, 'rt', encoding='utf-8') as f:
         return [json.loads(l) for l in f if l.strip()]
 
 
@@ -80,6 +82,70 @@ class DecisionTraceTest(unittest.TestCase):
         self.assertTrue(s['truncated'])
         self.assertLessEqual(s['bytes'], 300)
         self.assertEqual(s['ticks'], 10)
+
+
+class DecisionGzipTest(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_gzip_round_trip_and_cap_warning(self):
+        tr = trace.DecisionTrace(self.d)
+        self.assertTrue(tr.path.endswith('decisions.jsonl.gz'))
+        obs = Observation((1.0, 2.0), [(3.0, 4.0, 'Grunt')])
+        for _ in range(50):
+            tr.tick(obs=obs, move=1, fire=1, blind=0, held=False)
+        s = tr.close()
+        self.assertEqual(s['written'], 50)
+        self.assertFalse(s['truncated'])
+        with open(tr.path, 'rb') as f:
+            self.assertEqual(f.read(2), b'\x1f\x8b')                # really gzip
+        self.assertEqual(len(list(trace.iter_decision_lines(self.d))), 50)
+
+    def test_cap_is_announced_and_recorded(self):
+        import contextlib
+        import io
+        tr = trace.DecisionTrace(self.d, max_bytes=300)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            for _ in range(10):
+                tr.tick(obs=Observation((1.0, 1.0), [(1.0, 1.0, 'Grunt')] * 10),
+                        move=1, fire=1, blind=0, held=False)
+        s = tr.close()
+        self.assertTrue(s['truncated'])
+        self.assertEqual(s['truncated_at_tick'], s['written'] + 1)
+        self.assertEqual(buf.getvalue().count('WARNING: decision trace hit'), 1)
+
+    def test_readers_take_plain_and_gzip(self):
+        rows = _synthetic_rows(120)
+        plain = os.path.join(self.d, 'plain')
+        gz = os.path.join(self.d, 'gz')
+        os.makedirs(plain)
+        os.makedirs(gz)
+        with open(os.path.join(plain, 'decisions.jsonl'), 'w', encoding='utf-8') as f:
+            for r in rows:
+                f.write(json.dumps(r) + '\n')
+        with gzip.open(os.path.join(gz, 'decisions.jsonl.gz'), 'wt', encoding='utf-8') as f:
+            for r in rows:
+                f.write(json.dumps(r) + '\n')
+        a, b = trace_report.load_rows(plain), trace_report.load_rows(gz)
+        self.assertEqual(len(a), 120)
+        self.assertEqual(a, b)
+        self.assertEqual(trace_report.analyse(plain)['loop'], trace_report.analyse(gz)['loop'])
+
+    def test_gzip_cut_short_is_readable(self):
+        path = os.path.join(self.d, 'decisions.jsonl.gz')
+        with gzip.open(path, 'wt', encoding='utf-8') as f:
+            for r in _synthetic_rows(400):
+                f.write(json.dumps(r) + '\n')
+        with open(path, 'rb') as f:
+            data = f.read()
+        with open(path, 'wb') as f:
+            f.write(data[:len(data) // 2])             # the process died mid-write
+        n = len(list(trace.iter_decision_lines(self.d)))
+        self.assertTrue(0 < n < 400)
 
 
 class DeathRingTest(unittest.TestCase):
@@ -171,7 +237,7 @@ class HardwareTraceTest(unittest.TestCase):
         names = sorted(os.listdir(os.path.join(self.d, 'deaths')))
         self.assertEqual(names, ['g1_d01_w3', 'g1_gameover_w3'])
         self.assertTrue(os.path.exists(os.path.join(self.d, trace.HardwareTrace.SUMMARY)))
-        rows = _jsonl(os.path.join(self.d, 'decisions.jsonl'))
+        rows = _jsonl(os.path.join(self.d, 'decisions.jsonl.gz'))
         self.assertEqual(rows[-1]['hud']['deaths'], 1)
         self.assertEqual(rows[-1]['game'], 'g1')
 
@@ -222,6 +288,7 @@ class FakeController:
 
 
 class FakeBrain:
+    lag_ticks = 0.7
     player_lead_ticks = 1.5
     coaster = None
 
@@ -276,7 +343,7 @@ class VisionLoopIntegrationTest(unittest.TestCase):
                                          hold_action=1, trace=tr)
         finally:
             harness.ensure_game_running = orig
-        rows = _jsonl(os.path.join(self.d, 'decisions.jsonl'))
+        rows = _jsonl(os.path.join(self.d, 'decisions.jsonl.gz'))
         self.assertEqual(len(rows), len(script))
         self.assertEqual(rows[0]['move'], 3)
         self.assertEqual(rows[0]['entities'], [[150.0, 100.0, 'Grunt']])

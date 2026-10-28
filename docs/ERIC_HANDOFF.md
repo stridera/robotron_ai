@@ -80,7 +80,7 @@ is `python -m robotron_ai --mode hardware ...`; the README lists every flag.
    new base and the next candidate runs against it.
 
 When you want my read on something, zip the session folders in question
-(`report.json`, `decisions.jsonl`, `trace_summary.json` and
+(`report.json`, `decisions.jsonl.gz`, `trace_summary.json` and
 `rig_calibration.json` are what I use; the `deaths/` frames are 500 MB and
 only matter when the question is about specific deaths) and send them with
 the console text.

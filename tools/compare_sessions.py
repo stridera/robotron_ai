@@ -18,7 +18,7 @@ bootstrap 95% interval and a Welch p-value. Ten games an arm resolve a
 change of roughly five waves in the mean; below that, run another ten
 before believing it either way.
 
-With --trace it also loads decisions.jsonl (large, ~10 s a session) for the
+With --trace it also loads decisions.jsonl[.gz] (large, ~10 s a session) for the
 reversal latency in milliseconds, which is the number that says whether a
 change moved the loop rather than the play.
 """
@@ -149,17 +149,16 @@ def collect(paths):
 
 
 def reversal_ms(folder):
+    from ..trace import decision_path, iter_decision_lines
     from ..trace_report import reversal_latency
-    path = os.path.join(folder, "decisions.jsonl")
-    if not os.path.exists(path):
+    if not os.path.exists(decision_path(folder)):
         return None
     rows = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            try:
-                rows.append(json.loads(line))
-            except ValueError:
-                pass
+    for line in iter_decision_lines(folder):      # .jsonl or .jsonl.gz
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            pass
     rl = reversal_latency(rows)
     return dict(seen_by_ms=rl.get("seen_by_ms"), not_yet_ms=rl.get("not_yet_ms"),
                 estimate_ms=rl.get("estimate_ms"), estimate_err_ms=rl.get("estimate_err_ms"),
@@ -240,7 +239,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("sessions", nargs="+", help="session folders, globs, or report.json files")
     ap.add_argument("--trace", action="store_true",
-                    help="also read decisions.jsonl for the reversal latency in ms (slow)")
+                    help="also read decisions.jsonl[.gz] for the reversal latency in ms (slow)")
     ap.add_argument("--json", default=None, help="write the comparison here as JSON")
     a = ap.parse_args(argv)
     arms = collect(a.sessions)

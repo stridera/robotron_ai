@@ -1,4 +1,4 @@
-"""Offline analysis of a hardware trace folder (decisions.jsonl [+ deaths/]).
+"""Offline analysis of a hardware trace folder (decisions.jsonl[.gz] [+ deaths/]).
 
     python -m robotron_ai.trace_report <folder> [--json out.json] [--waves N]
 
@@ -35,6 +35,7 @@ import statistics as st
 from collections import Counter, defaultdict
 
 from . import coords
+from .trace import iter_decision_lines
 
 DXY_NOMINAL = {1: (0.0, -9.2), 2: (9.5, -9.2), 3: (9.5, 0.0), 4: (9.5, 9.2),
                5: (0.0, 9.2), 6: (-9.5, 9.2), 7: (-9.5, 0.0), 8: (-9.5, -9.2)}
@@ -55,17 +56,15 @@ WINDOW_S = 4.5       # s: how far before the HUD death event the collision can b
 
 # ── loading ───────────────────────────────────────────────────────────────
 def load_rows(folder):
-    path = os.path.join(folder, 'decisions.jsonl')
     rows = []
-    with open(path, encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except ValueError:
-                continue
+    for line in iter_decision_lines(folder):    # .jsonl or .jsonl.gz
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
     hud_path = os.path.join(folder, 'hud_samples.jsonl')
     if rows and rows[0].get('hud') is None and os.path.exists(hud_path):
         _merge_hud_samples(rows, hud_path)
@@ -534,7 +533,7 @@ def format_report(rep):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('folder', help='hardware_report folder (has decisions.jsonl)')
+    ap.add_argument('folder', help='hardware_report folder (has decisions.jsonl or .jsonl.gz)')
     ap.add_argument('--json', default=None, help='also write the full report here')
     ap.add_argument('--waves', type=int, default=12, help='per-wave table depth')
     a = ap.parse_args(argv)
