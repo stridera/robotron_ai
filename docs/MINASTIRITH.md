@@ -48,6 +48,9 @@ as `WSL_ROOT`, and the path is the same here as it was on the PC's WSL) and
 time on one core; sixteen cores means sixteen games in parallel. MAME's
 `-verifyroms` calls the set "bad" on both machines; it has always run.
 
+For paired A/B runs of the package brain (knobs or two checkouts) on the stand-in, see
+[MAME_LAB.md](MAME_LAB.md) (`tools/mamelab/`).
+
 ## What does not run here
 
 - The bot itself (`python -m robotron_ai --mode hardware`): needs the
