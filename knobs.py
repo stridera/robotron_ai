@@ -43,6 +43,10 @@ REGISTRY = OrderedDict([
     ("VSEARCH_FIREPLAN", ("0", "1 = fire at the threat that binds the clearance (kill the launcher). "
                                "Vision path: ON unless pinned")),
     ("VSEARCH_FIREPLAN_HULK_R", ("90", "px: fire at a hulk only inside this (hulks are indestructible)")),
+    ("VSEARCH_CLEAR_EXTENTS", ("0", "k > 0 = measure clearance edge to edge: centre distance minus k x (threat "
+                                    "half-size + player half-size) along the line between them, ROM sprite "
+                                    "sizes (hulk 14x16, grunt 10x13, spark 8x7...). Thresholds not retuned; "
+                                    "try 0.5 and 1.0. 0 = centre to centre")),
     ("VSEARCH_W_SPARK", ("1.8", "danger weight of sparks (enforcer shots) relative to a grunt")),
     ("VSEARCH_W_ENF", ("1.3", "danger weight of enforcers relative to a grunt")),
     ("VSEARCH_DISCOUNT", ("0", "per-tick discount on future danger in the planner (0 = none)")),
@@ -72,6 +76,18 @@ REGISTRY = OrderedDict([
     ("FSM_BUFFER_SCALE", ("1.0", "scales the FSM's collision buffers (1.15 and 1.30 both lost)")),
     ("FSM_KITE", ("0", "kiting mode 0-3 (all lost on MAME)")),
     ("FSM_ALWAYS_FIRE", ("0", "1 = hold fire every tick (parked)")),
+    ("FSM_HULK_CLOSING", ("0", "1 = shoot a hulk only while it is closing on the player (or within 25 px); "
+                               "one walking away gets no shot, the next target does. Movement unchanged")),
+    ("FSM_FIRE_SKIP_RECEDING", ("0", "1 = do not aim at sparks / tank shells flying away from the player "
+                                     "(unless it walks toward them, or a shell will bounce back within 40 px "
+                                     "in 8 ticks); never skips cruise missiles. Movement unchanged")),
+    ("FSM_FIRE_FALLBACK_REACH", ("0", "px, 0 = off. When the FSM has no target, aim at the nearest killable "
+                                      "within this reach that is lined up (+-12 deg) with a fire direction "
+                                      "instead of along the move direction (which shoots civilians). Try 250")),
+    ("FSM_SAVE_GRUNT", ("0", "N, 0 = off. Endgame farming: with civilians out and only <= N grunts left, "
+                             "release the fire stick and rescue (protects the last N grunts from fire when "
+                             "<= N+3 killables remain). Ends on: no civilian, Brain/Prog present, grunt within "
+                             "45 px, hulk within 80 px of the civilian, or 12 s used. Try 1")),
 ])
 
 # Knobs the brain overrides on the vision path unless the operator pins them.

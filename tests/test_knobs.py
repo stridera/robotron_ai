@@ -78,7 +78,7 @@ class PreloadTest(unittest.TestCase):
         import re
         pkg = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         src = ""
-        for name in ("engine/clearance_planner.py", "engine/robotron_fsm.py"):
+        for name in ("engine/clearance_planner.py", "engine/robotron_fsm.py", "brain.py"):
             with open(os.path.join(pkg, name), encoding="utf-8") as f:
                 src += f.read()
         found = dict(re.findall(r"environ\.get\(['\"]([A-Z_0-9]+)['\"],\s*['\"]([^'\"]*)['\"]", src))

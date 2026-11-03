@@ -7,7 +7,8 @@ dynamics (VSEARCH_ASMDYN=1 default).
 
 Config via the same env vars search_value.py used, read at import:
   VSEARCH_H, VSEARCH_CLEAR_DANGER, VSEARCH_CLEAR_MARGIN, VSEARCH_ASMDYN,
-  VSEARCH_FIREPLAN, VSEARCH_FIREPLAN_HULK_R
+  VSEARCH_FIREPLAN, VSEARCH_FIREPLAN_HULK_R, VSEARCH_CLEAR_EXTENTS,
+  FSM_HULK_CLOSING, FSM_FIRE_SKIP_RECEDING
 """
 from __future__ import annotations
 
@@ -73,6 +74,118 @@ _FIRE_ALT_SKIP = frozenset(("Player", "Mikey", "Mommy", "Daddy", "Hulk"))
 # Both measured FLAT at 1.15-2.4x on vision — kept as env knobs, not defaults.
 SPARK_W = float(os.environ.get("VSEARCH_W_SPARK", "1.8"))
 ENF_W = float(os.environ.get("VSEARCH_W_ENF", "1.3"))
+
+# CLEAR_EXTENTS k (2026-11, opt-in A/B, 0 = off = byte-identical): the clearance is
+# measured between sprite CENTRES, but a hulk (14x16 ROM px) or an electrode is
+# far wider than a spark (8x7), so the same centre distance means very different
+# real gaps. With k > 0 the distance is edge-to-edge along the line between the
+# two: max(0, centre_dist - k*(threat_extent + player_extent)), each extent being
+# the box half-size along that direction (ROM sprite sizes, docs/SPRITE_DATA.md;
+# player hitbox ~8x12, docs/ENEMY_MODEL.md). Thresholds are NOT retuned: k only
+# makes big things count as closer. Electrodes use their widest frame (10 px) —
+# the docs give no per-wave electrode shape.
+CLEAR_EXTENTS = float(os.environ.get("VSEARCH_CLEAR_EXTENTS", "0"))
+# Planner px per ROM pixel: the player walks 1 px/frame per axis (ENEMY_MODEL.md)
+# and DXY below is 9.5/9.2 planner px per 4 frames.
+_PX_PER_ROM_X, _PX_PER_ROM_Y = 2.375, 2.3
+_ROM_SIZE = {"Hulk": (14, 16), "Brain": (14, 16), "Grunt": (10, 13), "Prog": (10, 13),
+             "Electrode": (10, 9), "Enforcer": (10, 11), "EnforcerBullet": (8, 7),
+             "TankShell": (8, 7), "CruiseMissile": (6, 4), "Quark": (16, 15),
+             "Sphereoid": (16, 15), "Tank": (16, 15)}
+_ROM_DEFAULT = (10, 13)
+_ROM_PLAYER = (8, 12)
+_PLAYER_HX, _PLAYER_HY = (_ROM_PLAYER[0] / 2.0 * _PX_PER_ROM_X, _ROM_PLAYER[1] / 2.0 * _PX_PER_ROM_Y)
+
+
+def _half_extent(rom):
+    return rom[0] / 2.0 * _PX_PER_ROM_X, rom[1] / 2.0 * _PX_PER_ROM_Y
+
+
+def set_clear_extents(k: float) -> None:
+    """Set CLEAR_EXTENTS after import (tests, A/B)."""
+    global CLEAR_EXTENTS
+    CLEAR_EXTENTS = float(k)
+
+
+def _box_reach(hx, hy, ux, uy):
+    """Distance from a box's centre to its edge along the unit direction (ux, uy)
+    (absolute components); hx/hy are half-sizes. Works on numpy arrays."""
+    return np.minimum(hx / np.maximum(ux, 1e-6), hy / np.maximum(uy, 1e-6))
+
+
+# Fire-target gating (2026-11, opt-in A/B, both default OFF; the FSM has its own
+# copies, see robotron_fsm.HULK_CLOSING / SKIP_RECEDING): FIREPLAN and FIRE_ALT
+# may not aim at a hulk that is walking away, nor at a spark / tank shell flying
+# away from the player (never a cruise missile: it homes). Velocities passed to
+# the two helpers must be in one unit (px per step); the player's is DXY[move].
+HULK_CLOSING = os.environ.get("FSM_HULK_CLOSING", "0") == "1"
+SKIP_RECEDING = os.environ.get("FSM_FIRE_SKIP_RECEDING", "0") == "1"
+HULK_CLOSE_HARD = 25.0       # a hulk this close is shot at regardless of its heading
+RECEDING_MIN_SPEED = 1.0     # slower than this the velocity is unknown (new track): never skip
+BOUNCE_BACK_R = 40.0         # a shell that will come this close within BOUNCE_BACK_TICKS is kept
+BOUNCE_BACK_TICKS = 8
+FIRE_EXCLUDE = frozenset()   # (x, y, name) keys the fire logic must not aim at (set by brain.py)
+
+
+def set_fire_gates(hulk_closing=None, skip_receding=None) -> None:
+    """Set the two fire-gating knobs after import (tests, A/B)."""
+    global HULK_CLOSING, SKIP_RECEDING
+    if hulk_closing is not None:
+        HULK_CLOSING = bool(hulk_closing)
+    if skip_receding is not None:
+        SKIP_RECEDING = bool(skip_receding)
+
+
+def set_fire_exclude(keys) -> None:
+    global FIRE_EXCLUDE
+    FIRE_EXCLUDE = frozenset(keys)
+
+
+def hulk_closing(px, py, pvx, pvy, hx, hy, hvx, hvy) -> bool:
+    """True when the hulk is closing on the player: range rate (hulk velocity
+    minus player velocity) negative, or inside the hard HULK_CLOSE_HARD radius."""
+    dx, dy = hx - px, hy - py
+    if dx * dx + dy * dy <= HULK_CLOSE_HARD ** 2:
+        return True
+    return dx * (hvx - pvx) + dy * (hvy - pvy) < 0.0
+
+
+def projectile_receding(name, px, py, pvx, pvy, x, y, vx, vy) -> bool:
+    """True for a spark / tank shell the player should not waste a shot on: its
+    range to the player is increasing (relative velocity), the player is not
+    walking toward it, and (shells) it will not bounce back within
+    BOUNCE_BACK_R inside BOUNCE_BACK_TICKS steps. Cruise missiles and anything
+    with an unknown velocity are never receding."""
+    if name != "EnforcerBullet" and name != "TankShell":
+        return False
+    if vx * vx + vy * vy < RECEDING_MIN_SPEED ** 2:
+        return False
+    dx, dy = x - px, y - py
+    if dx * (vx - pvx) + dy * (vy - pvy) <= 0.0:
+        return False
+    if pvx * dx + pvy * dy > 0.0:
+        return False                      # walking toward it
+    if name == "TankShell":
+        sx, sy, svx, svy = x, y, vx, vy
+        for t in range(1, BOUNCE_BACK_TICKS + 1):
+            sx += svx; sy += svy
+            if sx < PX_MIN or sx > PX_MAX:
+                svx = -svx; sx = 2 * (PX_MIN if sx < PX_MIN else PX_MAX) - sx
+            if sy < PY_MIN or sy > PY_MAX:
+                svy = -svy; sy = 2 * (PY_MIN if sy < PY_MIN else PY_MAX) - sy
+            if math.hypot(sx - (px + pvx * t), sy - (py + pvy * t)) < BOUNCE_BACK_R:
+                return False
+    return True
+
+
+def _fire_blocked(name, key, px, py, pvx, pvy, x, y, vx, vy) -> bool:
+    """True when the fire logic must not aim at this sprite (see the knobs above)."""
+    if key in FIRE_EXCLUDE:
+        return True
+    if HULK_CLOSING and name == "Hulk" and not hulk_closing(px, py, pvx, pvy, x, y, vx, vy):
+        return True
+    return SKIP_RECEDING and projectile_receding(name, px, py, pvx, pvy, x, y, vx, vy)
+
 
 # Per-env-step player displacement (obs px) by server move dir 1..8, measured
 # 2026-06-28 at frameskip 4; scales linearly with frameskip (1px/frame per axis).
@@ -191,8 +304,9 @@ def _heading_clearance(px, py, T, d, H, return_argmin=False):
     T = (tx,ty,vx,vy,w,chase,spd,refl) numpy arrays. Chasers re-aim toward the
     player each step; reflectors mirror off walls with velocity negation
     (asm:7807-7857); others clamp at the border like the game's integrator
-    (asm:17308-17327). With return_argmin, also returns the BINDING threat index."""
-    tx, ty, tvx, tvy, w, chase, spd, refl = T
+    (asm:17308-17327). T may carry two extra arrays (box half-sizes) for
+    CLEAR_EXTENTS. With return_argmin, also returns the BINDING threat index."""
+    tx, ty, tvx, tvy, w, chase, spd, refl = T[:8]
     ppx, ppy = px, py
     dx_, dy_ = DXY[d]
     tx = tx.copy(); ty = ty.copy()
@@ -218,7 +332,13 @@ def _heading_clearance(px, py, T, d, H, return_argmin=False):
                 tvy = np.where(lo | hi, -tvy, tvy)
                 ty = np.where(lo, 2 * PY_MIN - ty, np.where(hi, 2 * PY_MAX - ty, ty))
             tx = np.clip(tx, PX_MIN, PX_MAX); ty = np.clip(ty, PY_MIN, PY_MAX)
-        clr = np.sqrt((ppx - tx) ** 2 + (ppy - ty) ** 2) / w
+        dist = np.sqrt((ppx - tx) ** 2 + (ppy - ty) ** 2)
+        if len(T) > 8:                  # CLEAR_EXTENTS: edge-to-edge instead of centre-to-centre
+            inv = 1.0 / np.maximum(dist, 1e-6)
+            ux, uy = np.abs(ppx - tx) * inv, np.abs(ppy - ty) * inv
+            reach = _box_reach(T[8], T[9], ux, uy) + _box_reach(_PLAYER_HX, _PLAYER_HY, ux, uy)
+            dist = np.maximum(0.0, dist - CLEAR_EXTENTS * reach)
+        clr = dist / w
         if DISCOUNT > 0.0:
             clr = clr * (1.0 + DISCOUNT * step_i)
         i = int(clr.argmin()); m = float(clr[i])
@@ -236,6 +356,7 @@ def _clearance_search_impl(sprites, fsm_mv, first_fire):
         return fsm_mv, first_fire
     px, py = player[0], player[1]
     xs, ys, vxs, vys, ws, ch, sp, rf, nm = [], [], [], [], [], [], [], [], []
+    hxs, hys = [], []
     for s in sprites:
         if s[2] == "Player":
             continue
@@ -251,11 +372,16 @@ def _clearance_search_impl(sprites, fsm_mv, first_fire):
         xs.append(s[0]); ys.append(s[1]); vxs.append(svx); vys.append(svy)
         ws.append(wt); ch.append(isch); sp.append(speed); rf.append(refl)
         nm.append(s[2])
+        if CLEAR_EXTENTS > 0.0:
+            ehx, ehy = _half_extent(_ROM_SIZE.get(s[2], _ROM_DEFAULT))
+            hxs.append(ehx); hys.append(ehy)
     if not xs:
         return fsm_mv, first_fire
     T = (np.array(xs), np.array(ys), np.array(vxs), np.array(vys),
          np.array(ws), np.array(ch, dtype=bool), np.array(sp),
          np.array(rf, dtype=bool))
+    if CLEAR_EXTENTS > 0.0:
+        T += (np.array(hxs), np.array(hys))
     clr = [_heading_clearance(px, py, T, d, CLEAR_H_EFF) for d in range(1, 9)]
     v_fsm = clr[fsm_mv - 1]
     if v_fsm >= CLEAR_DANGER:                      # FSM heading is safe enough — trust it
@@ -271,7 +397,10 @@ def _clearance_search_impl(sprites, fsm_mv, first_fire):
         _, bi = _heading_clearance(px, py, T, best_d, CLEAR_H_EFF, return_argmin=True)
         bx, by = float(T[0][bi]), float(T[1][bi])
         if nm[bi] != "Hulk" or ((bx - px) ** 2 + (by - py) ** 2) <= FIREPLAN_HULK_R ** 2:
-            return best_d, _dir_toward(px, py, bx, by)
+            if not (HULK_CLOSING or SKIP_RECEDING or FIRE_EXCLUDE) or not _fire_blocked(
+                    nm[bi], (bx, by, nm[bi]), px, py, DXY[best_d][0], DXY[best_d][1],
+                    bx, by, float(T[2][bi]), float(T[3][bi])):
+                return best_d, _dir_toward(px, py, bx, by)
     return best_d, first_fire
 
 
@@ -284,8 +413,9 @@ def set_fire_alt(on: bool, radius: float = None) -> None:
     LAST_FIRE = 0
 
 
-def _alternate_fire(sprites, fire):
-    """FIRE_ALT: see the knob comment. Returns the fire direction to send."""
+def _alternate_fire(sprites, fire, mv=0):
+    """FIRE_ALT: see the knob comment. Returns the fire direction to send. mv is
+    the move being sent (the player's velocity for the fire-gating knobs)."""
     global LAST_FIRE
     if FIRE_ALT and fire >= 1 and fire == LAST_FIRE:
         player = next((s for s in sprites if s[2] == "Player"), None)
@@ -293,11 +423,16 @@ def _alternate_fire(sprites, fire):
             px, py = player[0], player[1]
             best = None
             r2 = FIRE_ALT_R * FIRE_ALT_R
+            gate = HULK_CLOSING or SKIP_RECEDING or FIRE_EXCLUDE
+            pvx, pvy = DXY.get(mv, (0.0, 0.0))
             for s in sprites:
                 if s[2] in _FIRE_ALT_SKIP:
                     continue
                 d2 = (s[0] - px) ** 2 + (s[1] - py) ** 2
                 if d2 > r2 or d2 < 1.0:
+                    continue
+                if gate and _fire_blocked(s[2], (s[0], s[1], s[2]), px, py, pvx, pvy, s[0], s[1],
+                                          s[3] * TICK_SCALE, s[4] * TICK_SCALE):
                     continue
                 dd = _dir_toward(px, py, s[0], s[1])
                 if dd != fire and (best is None or d2 < best[0]):
@@ -313,5 +448,5 @@ def clearance_search(sprites, fsm_mv, first_fire):
     plus the opt-in FIRE_ALT fire-direction alternation."""
     mv, fire = _clearance_search_impl(sprites, fsm_mv, first_fire)
     if FIRE_ALT:
-        fire = _alternate_fire(sprites, fire)
+        fire = _alternate_fire(sprites, fire, mv)
     return mv, fire

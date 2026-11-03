@@ -235,6 +235,18 @@ KITE_ORBIT_R = float(_os.environ.get('FSM_KITE_ORBIT_R', '170'))   # mode 3: sta
 # target is inside a CLOSE_FIRE radius. When the fire stick would be idle, shoot the
 # nearest killable at any range (waves end sooner = less exposure; more score).
 ALWAYS_FIRE = _os.environ.get('FSM_ALWAYS_FIRE', '0') == '1'
+# Fire-selection knobs (2026-11, A/B candidates, both default OFF). The FSM sees no
+# velocities, so brain.py computes the per-tick sets and hands them over in CTX
+# ({'closing': hulks worth shooting, 'skip': receding sparks/shells}, keys are the
+# (x, y, name) input tuples); CTX is None unless a knob is on, and a knob without
+# a CTX does nothing. Movement is never touched, only which target the fire stick takes.
+#   HULK_CLOSING:  fire at a hulk only while it is closing on the player (a hulk
+#                  walking away is a wasted shot); otherwise take the next target.
+#   SKIP_RECEDING: do not aim at sparks / tank shells flying away from the player
+#                  (never cruise missiles); take the next-nearest approaching one.
+HULK_CLOSING = _os.environ.get('FSM_HULK_CLOSING', '0') == '1'
+SKIP_RECEDING = _os.environ.get('FSM_FIRE_SKIP_RECEDING', '0') == '1'
+CTX = None
 _KITE_KILLABLE_TYPES = {'Grunt', 'Brain', 'Sphereoid', 'Quark', 'Enforcer', 'Tank'}
 _KITE_THREAT_TYPES = _KITE_KILLABLE_TYPES | {'Hulk', 'Prog'}
 _kite_dir = 1
@@ -748,6 +760,17 @@ def edgeDeflect(moveStick, playerLocation):
     return moveStick                             # boxed into a corner — keep original
 
 
+def _fire_fallthrough(proj, chase, prio, enemy, obstacle):
+    """HULK_CLOSING / SKIP_RECEDING: the first target the close-fire chain below
+    would take, with the ruled-out hulk / receding projectile left out."""
+    for t, r in ((proj, CLOSE_FIRE_PROJECTILE), (chase, CLOSE_FIRE_CHASE_ENEMY),
+                 (prio, CLOSE_FIRE_PRIORITY_ENEMY), (enemy, CLOSE_FIRE_ENEMY),
+                 (obstacle, CLOSE_FIRE_OBSTACLE)):
+        if t != INVALID and t[DISTANCE] <= r:
+            return t
+    return INVALID
+
+
 def _nearest_killable(*cands):
     """Closest non-INVALID threat-distance among killable categories (excludes hulks)."""
     best = INVALID
@@ -797,6 +820,15 @@ def chooseOutputs(objectList):
     adjacentIsShell = False
     nearestProjectileIsShell = False
     brainSeen = False   # brain-wave rescue aggression (see BRAIN_RESCUE_MULT)
+    # HULK_CLOSING / SKIP_RECEDING bookkeeping (inert unless brain.py supplied CTX)
+    _hc_on = HULK_CLOSING and CTX is not None
+    _sr_on = SKIP_RECEDING and CTX is not None
+    _closing = CTX.get('closing', ()) if _hc_on else ()
+    _skip = CTX.get('skip', ()) if _sr_on else ()
+    nearestClosingHulk = INVALID    # nearest hulk that is closing in
+    nearestFireProjectile = INVALID  # nearest projectile not flagged receding
+    adjacentHulkClosing = True
+    adjacentProjectileSkipped = False
     kiteThreats = []    # KITE: enemy positions for the blocked-ahead check
     kiteKillable = 0    # KITE: killables left (hunt the last few so waves end)
 
@@ -852,6 +884,7 @@ def chooseOutputs(objectList):
 
         if objType in PROJECTILES:
             _isShell = objType == 'TankShell'
+            _skipped = _sr_on and obj in _skip
             projectileDistance = getDistance(playerLocation, objX, objY)
             if DEBUG_LEVEL >= DEBUG_HIGH:
                 print(f"Enemy x {objX} y {objY} dist {projectileDistance} prior nearest Projectile {nearestProjectile}")
@@ -868,6 +901,7 @@ def chooseOutputs(objectList):
                     adjacentType = PROJECTILE_TYPE
                     adjacent = projectileDistance
                     adjacentIsShell = _isShell
+                    adjacentProjectileSkipped = _skipped
                     if DEBUG_LEVEL >= DEBUG_HIGH:
                         print("Adjacent set to new Projectile")
                 if DEBUG_LEVEL >= DEBUG_MED:
@@ -878,6 +912,9 @@ def chooseOutputs(objectList):
                 nearestProjectileIsShell = _isShell
                 if DEBUG_LEVEL >= DEBUG_HIGH:
                     print(f"NearestProjectile updated to {projectileDistance}")
+            if _sr_on and not _skipped and (nearestFireProjectile == INVALID
+                                            or nearestFireProjectile[DISTANCE] > projectileDistance[DISTANCE]):
+                nearestFireProjectile = projectileDistance
             if not _isShell and (nearestKillableProjectile == INVALID
                                  or nearestKillableProjectile[DISTANCE] > projectileDistance[DISTANCE]):
                 nearestKillableProjectile = projectileDistance
@@ -984,6 +1021,9 @@ def chooseOutputs(objectList):
 
         elif objType == HULK:
             hulkDistance = getDistance(playerLocation, objX, objY)
+            _closes = (not _hc_on) or obj in _closing
+            if _closes and (nearestClosingHulk == INVALID or nearestClosingHulk[DISTANCE] > hulkDistance[DISTANCE]):
+                nearestClosingHulk = hulkDistance
             if hulkDistance[DISTANCE] <= CLOSE_MOVE_HULK:
                 if DEBUG_LEVEL >= DEBUG_MED:
                     print(f"Hulk is CLOSE_MOVE {hulkDistance}")
@@ -996,6 +1036,7 @@ def chooseOutputs(objectList):
                 if adjacent == INVALID or (adjacentType not in (PROJECTILE_TYPE, QUARK_TYPE, PRIORITY_ENEMY_TYPE, CHASE_ENEMY_TYPE, ENEMY_TYPE)) or (adjacentType == HULK and hulkDistance[DISTANCE] < adjacent[DISTANCE]):
                     adjacentType = HULK
                     adjacent = hulkDistance
+                    adjacentHulkClosing = _closes
                     if DEBUG_LEVEL >= DEBUG_MED:
                         print("Hulk is Adjacent")
                         print(f"Hulk {obj} dist {hulkDistance}")
@@ -1051,6 +1092,7 @@ def chooseOutputs(objectList):
         print("Done looping over objects")
 
     """ DONE CHECK ALL OBJECTS """
+    _fp = nearestFireProjectile if _sr_on else nearestProjectile   # projectile to take fire at
 
     """ CHECK ADJACENT """
 
@@ -1072,6 +1114,10 @@ def chooseOutputs(objectList):
                 _kt = _nearest_killable(nearestKillableProjectile, nearestChaseEnemy,
                                         nearestPriorityEnemy, nearestEnemy)
                 fireStick = getFireStick(_kt) if _kt != INVALID else getFireStick(adjacent)
+            elif _sr_on and adjacentProjectileSkipped:
+                _kt = _fire_fallthrough(_fp, nearestChaseEnemy, nearestPriorityEnemy,
+                                        nearestEnemy, nearestObstacle)
+                fireStick = getFireStick(_kt) if _kt != INVALID else STAY
             else:
                 fireStick = getFireStick(adjacent)
             if closeMoveCount > CLOSE_MOVE_COUNT_LIMIT:
@@ -1120,6 +1166,11 @@ def chooseOutputs(objectList):
                     nearestKillableProjectile if NO_SHOOT_SHELLS else nearestProjectile,
                     nearestChaseEnemy, nearestPriorityEnemy, nearestEnemy)
                 fireStick = getFireStick(_kt) if _kt != INVALID else getFireStick(adjacent)
+            elif _hc_on and not adjacentHulkClosing:
+                # walking away: shooting it only shoves it; take the next target
+                _kt = _fire_fallthrough(_fp, nearestChaseEnemy, nearestPriorityEnemy,
+                                        nearestEnemy, nearestObstacle)
+                fireStick = getFireStick(_kt) if _kt != INVALID else STAY
             else:
                 fireStick = getFireStick(adjacent)
             if closeMoveCount > CLOSE_MOVE_COUNT_LIMIT:
@@ -1196,6 +1247,11 @@ def chooseOutputs(objectList):
                     if nearestKillableProjectile != INVALID \
                             and nearestKillableProjectile[DISTANCE] <= CLOSE_FIRE_PROJECTILE:
                         fireStick = getFireStick(nearestKillableProjectile)
+                elif _sr_on:
+                    # the nearest one may be flying away: next-nearest approaching, else
+                    # fall through to the chase / priority / enemy tiers below
+                    if _fp != INVALID and _fp[DISTANCE] <= CLOSE_FIRE_PROJECTILE:
+                        fireStick = getFireStick(_fp)
                 else:
                     fireStick = getFireStick(nearestProjectile)
                 if DEBUG_LEVEL >= DEBUG_LOW:
@@ -1267,11 +1323,12 @@ def chooseOutputs(objectList):
                 moveStick = getMoveStick(nearestHulk, AWAY, playerLocation)
                 if DEBUG_LEVEL >= DEBUG_LOW:
                     print(f"nearest Hulk is CLOSE_MOVE fire {fireStick} move {moveStick} player {playerLocation}")
-        if nearestHulk[DISTANCE] <= CLOSE_FIRE_HULK:
+        _fh = nearestClosingHulk if _hc_on else nearestHulk   # HULK_CLOSING: not one walking away
+        if _fh != INVALID and _fh[DISTANCE] <= CLOSE_FIRE_HULK:
             if DEBUG_LEVEL >= DEBUG_MED:
                 print(f"Hulk is CLOSE_FIRE {nearestHulk}")
             if fireStick == INVALID:
-                fireStick = getFireStick(nearestHulk)
+                fireStick = getFireStick(_fh)
                 if DEBUG_LEVEL >= DEBUG_LOW:
                     print(f"nearest Hulk is CLOSE_FIRE fire {fireStick} move {moveStick} player {playerLocation}")
 

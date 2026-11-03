@@ -12,7 +12,9 @@ The brain is perception- and controller-agnostic; the harness feeds it and
 routes its output to whichever controller is active.
 """
 import json
+import math
 import os
+import time
 
 # Whether the USER pinned the planner margins / fireplan (before our
 # setdefaults make the vars exist unconditionally) — a pinned value always
@@ -31,14 +33,46 @@ os.environ.setdefault("VSEARCH_CLEAR_MARGIN", "10")
 os.environ.setdefault("FSM_RESCUE_SEEK", "1")
 
 from .engine import robotron_fsm as fsm                       # noqa: E402
+from .engine import clearance_planner as cp                    # noqa: E402
 from .engine.clearance_planner import (clearance_search, DXY,  # noqa: E402
-                                       set_margins, set_fireplan, set_fire_alt)
+                                       set_margins, set_fireplan, set_fire_alt,
+                                       set_fire_exclude, _dir_toward)
 # Vision-path planner margins (2026-07-08 dose-response A/B): ~1.15x the
 # memory-optimal 18/10 absorbs vision tracking noise (mean 14.4 vs 13.6,
 # worst-game floor W10 vs W7); 1.3x regressed. Memory path keeps 18/10.
 VISION_MARGINS = (21.0, 12.0)
 VISION_FIRE_ALT_R = 400.0   # fire-alternation second-target radius (proxy plateau)
 from . import coords                                          # noqa: E402
+
+# ── Behaviour knobs (2026-11, A/B candidates, all OFF by default) ─────────────
+# FSM_FIRE_FALLBACK_REACH (px, 0 = off): when the FSM has nothing to shoot
+# (fire STAY) the old code fires along the MOVE direction, which is how the bot
+# ends up shooting the civilians it is walking toward. With a reach, fire at the
+# nearest killable (not family / hulk / electrode) within that many px whose
+# bearing, led by its velocity over the laser's flight time, lies within
+# FALLBACK_LINE_DEG of one of the 8 fire directions; none lined up = old fallback.
+FIRE_FALLBACK_REACH = float(os.environ.get("FSM_FIRE_FALLBACK_REACH", "0"))
+FALLBACK_LINE_DEG = 12.0
+LASER_PX_PER_TICK = 56.0    # 6 ROM px/frame * 4 frames * ~2.35 planner px per ROM px
+_NO_FALLBACK_AIM = frozenset(("Player", "Mikey", "Mommy", "Daddy", "Hulk", "Electrode"))
+# FSM_SAVE_GRUNT (N, 0 = off): endgame score-farming. Rescues escalate to 5000 and
+# the wave only ends when the last killable dies, so with civilians still out and
+# only grunts left, keep the last N grunts alive and collect the family first:
+#   protect (killables <= N+3, so only the N farthest grunts are spared): fire at
+#     everything else but never at a protected grunt;
+#   hold (the only killables left are <= N grunts): fire stick released
+#     completely (FSM shot, move-direction fallback, FIRE_ALT, FIREPLAN, reach
+#     fallback all off); the FSM keeps rescuing (RESCUE_SEEK) and the planner dodging.
+# Off (normal killing resumes) while: no civilian is visible, a Brain or Prog is
+# on screen (they convert humans), any grunt is within SAVE_EXIT_R (60 to
+# re-enter) of the player, a hulk is within SAVE_HULK_R of the nearest civilian,
+# or save mode has used SAVE_MAX_S of wall time this wave (then locked out until
+# the next reset(), so the wave always ends).
+SAVE_GRUNT = int(os.environ.get("FSM_SAVE_GRUNT", "0"))
+SAVE_EXTRA_KILLABLES = 3
+SAVE_EXIT_R, SAVE_REENTER_R, SAVE_HULK_R, SAVE_MAX_S = 45.0, 60.0, 80.0, 12.0
+_FAMILY = frozenset(("Mikey", "Mommy", "Daddy"))
+_SAVE_OTHER_KILLABLE = frozenset(("Sphereoid", "Quark", "Enforcer", "Tank"))
 
 _ENGINE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine")
 
@@ -249,6 +283,8 @@ class ChampionBrain:
             on = use_coaster if fire_alt is None else bool(fire_alt)
             set_fire_alt(on, VISION_FIRE_ALT_R if on else None)
         self.last_mv = 0
+        self.clock = time.monotonic       # save-grunt timer (tests inject a fake)
+        self._save_reset()
         self._setup_fsm(debug)
 
     def _setup_fsm(self, debug: bool):
@@ -278,6 +314,80 @@ class ChampionBrain:
         if self.coaster is not None:
             self.coaster.reset()
         self.last_mv = 0
+        self._save_reset()
+
+    def _save_reset(self):
+        self.save_active = False     # save mode engaged on the last tick
+        self.save_used = 0.0         # seconds of save mode spent this wave
+        self.save_locked = False
+        self._save_t = 0.0
+
+    def _player_vel(self):
+        """Player velocity, px per NOMINAL tick, from the last command."""
+        vx, vy = DXY.get(self.last_mv, (0.0, 0.0))
+        return vx / cp.TICK_SCALE, vy / cp.TICK_SCALE
+
+    def _save_grunt(self, px, py, others):
+        """FSM_SAVE_GRUNT state machine. Returns (0 off | 1 protect | 2 hold,
+        keys of the protected grunts). See the knob comment."""
+        n = SAVE_GRUNT
+        grunts = [s for s in others if s[2] == "Grunt"]
+        civs = [s for s in others if s[2] in _FAMILY]
+        other_k = [s for s in others if s[2] in _SAVE_OTHER_KILLABLE]
+        mode, prot = 0, ()
+        if (n > 0 and not self.save_locked and civs and grunts
+                and len(grunts) + len(other_k) <= n + SAVE_EXTRA_KILLABLES
+                and not any(s[2] in ("Brain", "Prog") for s in others)):
+            near = min(math.hypot(s[0] - px, s[1] - py) for s in grunts)
+            civ = min(civs, key=lambda s: (s[0] - px) ** 2 + (s[1] - py) ** 2)
+            hulk_near = any(s[2] == "Hulk" and math.hypot(s[0] - civ[0], s[1] - civ[1]) <= SAVE_HULK_R
+                            for s in others)
+            if near > (SAVE_EXIT_R if self.save_active else SAVE_REENTER_R) and not hulk_near:
+                keep = sorted(grunts, key=lambda s: -((s[0] - px) ** 2 + (s[1] - py) ** 2))[:n]
+                prot = tuple((s[0], s[1], s[2]) for s in keep)
+                mode = 2 if (not other_k and len(grunts) <= n) else 1
+        now = self.clock()
+        if mode:
+            if self.save_active:
+                self.save_used += min(max(now - self._save_t, 0.0), 0.5)
+            if self.save_used > SAVE_MAX_S:
+                self.save_locked, mode, prot = True, 0, ()
+        self.save_active, self._save_t = bool(mode), now
+        return mode, prot
+
+    def _fire_context(self, sel, px, py):
+        """FSM_HULK_CLOSING / FSM_FIRE_SKIP_RECEDING: the per-tick sets the FSM
+        (which sees no velocities) needs, keyed by its (x, y, name) input tuples."""
+        pvx, pvy = self._player_vel()
+        closing, skip = set(), set()
+        for s in sel:
+            if fsm.HULK_CLOSING and s[2] == "Hulk" \
+                    and cp.hulk_closing(px, py, pvx, pvy, s[0], s[1], s[3], s[4]):
+                closing.add((s[0], s[1], s[2]))
+            elif fsm.SKIP_RECEDING and cp.projectile_receding(
+                    s[2], px, py, pvx, pvy, s[0], s[1], s[3], s[4]):
+                skip.add((s[0], s[1], s[2]))
+        return {'closing': closing, 'skip': skip}
+
+    def _lined_up_fire(self, px, py, others, protected=()):
+        """FIRE_FALLBACK_REACH: direction of the nearest killable within reach
+        that is lined up with one of the 8 fire directions, else 0."""
+        pvx, pvy = self._player_vel()
+        best = None
+        for s in others:
+            if s[2] in _NO_FALLBACK_AIM or (s[0], s[1], s[2]) in protected:
+                continue
+            d = math.hypot(s[0] - px, s[1] - py)
+            if d > FIRE_FALLBACK_REACH or d < 1.0:
+                continue
+            if fsm.SKIP_RECEDING and cp.projectile_receding(
+                    s[2], px, py, pvx, pvy, s[0], s[1], s[3], s[4]):
+                continue
+            lx, ly = s[0] + s[3] * d / LASER_PX_PER_TICK, s[1] + s[4] * d / LASER_PX_PER_TICK
+            ang = math.degrees(math.atan2(ly - py, lx - px))
+            if abs((ang + 22.5) % 45.0 - 22.5) <= FALLBACK_LINE_DEG and (best is None or d < best[0]):
+                best = (d, _dir_toward(px, py, lx, ly))
+        return best[1] if best else 0
 
     def _champion_action(self, sprites):
         """sprites = [(px, py, name, vx, vy), ...] incl. ('Player'). -> (mv, fr) 1..8."""
@@ -293,14 +403,27 @@ class ChampionBrain:
                             key=d2)[:cnt]:
                 used.add(id(s)); sel.append(s)
         sel += sorted([s for s in others if id(s) not in used], key=d2)[:CATCHALL_SLOTS]
+        save, protected = 0, ()
+        if SAVE_GRUNT > 0:
+            save, protected = self._save_grunt(px, py, others)
+            set_fire_exclude(protected)
+            if save == 1:       # the FSM must not see the grunts it is meant to spare
+                sel = [s for s in sel if (s[0], s[1], s[2]) not in protected]
+        fsm.CTX = self._fire_context(sel, px, py) if (fsm.HULK_CLOSING or fsm.SKIP_RECEDING) else None
         data = [(px, py, "Player")] + [(s[0], s[1], s[2]) for s in sel]
         try:
             mv, fr = fsm.chooseOutputs(data)
         except Exception:
             mv, fr = 1, 1
         mv = mv if mv >= 1 else 1
-        fr = fr if fr >= 1 else mv
-        return clearance_search(sprites, mv, fr)
+        if save == 2:
+            fr = 0              # hold fire completely
+        else:
+            if fr < 1 and FIRE_FALLBACK_REACH > 0:
+                fr = self._lined_up_fire(px, py, others, protected)
+            fr = fr if fr >= 1 else mv
+        mv, fr = clearance_search(sprites, mv, fr)
+        return (mv, 0) if save == 2 else (mv, fr)
 
     def blind_tick(self, entities):
         """Feed a tick where the PLAYER box was missed but enemies were seen.
