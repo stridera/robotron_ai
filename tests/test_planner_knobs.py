@@ -70,6 +70,11 @@ class FireAltTest(unittest.TestCase):
 
 class BrainWiringTest(unittest.TestCase):
     def tearDown(self):
+        from .. import brain as brain_mod
+        from ..engine import robotron_fsm as fsm
+        fsm.SKIP_RECEDING = False
+        cp.set_fire_gates(False, False)
+        brain_mod.FIRE_FALLBACK_REACH = 0.0
         cp.set_fire_alt(False)
         cp.set_fireplan(False)
         cp.set_margins(18, 10)

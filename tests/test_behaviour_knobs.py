@@ -1,4 +1,5 @@
-"""Tests for the five 2026-11 behaviour knobs (all OFF by default):
+"""Tests for the five 2026-11 behaviour knobs (OFF by default, except FSM_FIRE_SKIP_RECEDING
+and FSM_FIRE_FALLBACK_REACH which are vision-path defaults, see VisionDefaultsTest):
 FSM_HULK_CLOSING, FSM_FIRE_FALLBACK_REACH, FSM_FIRE_SKIP_RECEDING,
 VSEARCH_CLEAR_EXTENTS, FSM_SAVE_GRUNT.
 
@@ -52,9 +53,16 @@ def _golden_frames(n=120, seed=11):
 
 
 def _golden_run(vision):
+    """The vision path now defaults SKIP_RECEDING and FALLBACK_REACH on, so the
+    golden pins both to 0 (as `--knob NAME=0` does) to reproduce the pre-knob run."""
     _all_off()
-    b = brain_mod.ChampionBrain(lag_ticks=0.7, use_coaster=vision, fire_alt=vision)
-    out = [b.decide(p, e) for p, e in _golden_frames()]
+    saved = (brain_mod._USER_PINNED_SKIP_RECEDING, brain_mod._USER_PINNED_FALLBACK_REACH)
+    brain_mod._USER_PINNED_SKIP_RECEDING = brain_mod._USER_PINNED_FALLBACK_REACH = True
+    try:
+        b = brain_mod.ChampionBrain(lag_ticks=0.7, use_coaster=vision, fire_alt=vision)
+        out = [b.decide(p, e) for p, e in _golden_frames()]
+    finally:
+        brain_mod._USER_PINNED_SKIP_RECEDING, brain_mod._USER_PINNED_FALLBACK_REACH = saved
     return hashlib.sha256(repr(out).encode()).hexdigest()
 
 
@@ -102,6 +110,75 @@ class OffIsIdenticalTest(unittest.TestCase):
             self.assertIn(k, knobs.REGISTRY)
             self.assertEqual(knobs.REGISTRY[k][0], "0")
             self.assertIn(k, text)
+
+
+def _brain(vision, skip_pinned=False, reach_pinned=False, skip_env=False, reach_px=0.0):
+    """Construct a brain as brain.py would after import with the given pins.
+    A pinned knob keeps the import-time value (skip_env / reach_px), as --knob does."""
+    _all_off()
+    fsm.SKIP_RECEDING, brain_mod.FIRE_FALLBACK_REACH = skip_env, reach_px
+    cp.set_fire_gates(skip_receding=skip_env)
+    saved = (brain_mod._USER_PINNED_SKIP_RECEDING, brain_mod._USER_PINNED_FALLBACK_REACH)
+    brain_mod._USER_PINNED_SKIP_RECEDING, brain_mod._USER_PINNED_FALLBACK_REACH = skip_pinned, reach_pinned
+    try:
+        return brain_mod.ChampionBrain(lag_ticks=0.7, use_coaster=vision)
+    finally:
+        brain_mod._USER_PINNED_SKIP_RECEDING, brain_mod._USER_PINNED_FALLBACK_REACH = saved
+
+
+class VisionDefaultsTest(unittest.TestCase):
+    """FSM_FIRE_SKIP_RECEDING=1 and FSM_FIRE_FALLBACK_REACH=250 are vision defaults;
+    each is pinned independently; the memory path keeps both at 0."""
+
+    def tearDown(self):
+        _all_off()
+
+    def state(self):
+        return (fsm.SKIP_RECEDING, cp.SKIP_RECEDING, brain_mod.FIRE_FALLBACK_REACH)
+
+    def test_vision_default_on(self):
+        _brain(True)
+        self.assertEqual(self.state(), (True, True, 250.0))
+
+    def test_memory_path_stays_off(self):
+        _brain(False)
+        self.assertEqual(self.state(), (False, False, 0.0))
+
+    def test_explicit_zero_pin_turns_each_off(self):
+        _brain(True, skip_pinned=True, reach_pinned=True)
+        self.assertEqual(self.state(), (False, False, 0.0))
+
+    def test_pinning_skip_leaves_reach_on(self):
+        _brain(True, skip_pinned=True)
+        self.assertEqual(self.state(), (False, False, 250.0))
+
+    def test_pinning_reach_leaves_skip_on(self):
+        _brain(True, reach_pinned=True)
+        self.assertEqual(self.state(), (True, True, 0.0))
+
+    def test_a_pinned_nonzero_value_is_kept(self):
+        _brain(True, reach_pinned=True, reach_px=120.0)
+        self.assertEqual(brain_mod.FIRE_FALLBACK_REACH, 120.0)
+
+    def test_knobs_report_the_vision_effective_values(self):
+        v = knobs.effective_values({}, vision=True, applied={})
+        self.assertEqual((v["FSM_FIRE_SKIP_RECEDING"], v["FSM_FIRE_FALLBACK_REACH"]), ("1", "250"))
+        m = knobs.effective_values({}, vision=False, applied={})
+        self.assertEqual((m["FSM_FIRE_SKIP_RECEDING"], m["FSM_FIRE_FALLBACK_REACH"]), ("0", "0"))
+        text = knobs.describe({}, vision=True)
+        for k, val in (("FSM_FIRE_SKIP_RECEDING", "1"), ("FSM_FIRE_FALLBACK_REACH", "250")):
+            line = next(l for l in text.splitlines() if l.startswith(k))
+            self.assertIn(f" {val} ", line)
+
+    def test_knobs_zero_pin_and_independence(self):
+        v = knobs.effective_values({"FSM_FIRE_SKIP_RECEDING": "0"}, vision=True, applied={})
+        self.assertEqual((v["FSM_FIRE_SKIP_RECEDING"], v["FSM_FIRE_FALLBACK_REACH"]), ("0", "250"))
+        v = knobs.effective_values({"FSM_FIRE_FALLBACK_REACH": "0"}, vision=True, applied={})
+        self.assertEqual((v["FSM_FIRE_SKIP_RECEDING"], v["FSM_FIRE_FALLBACK_REACH"]), ("1", "0"))
+
+    def test_pinning_one_does_not_drop_other_vision_defaults(self):
+        v = knobs.effective_values({"FSM_FIRE_SKIP_RECEDING": "0"}, vision=True, applied={})
+        self.assertEqual((v["VSEARCH_FIREPLAN"], v["VSEARCH_CLEAR_MARGIN"]), ("1", "12"))
 
 
 class HulkClosingTest(Base):

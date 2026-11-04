@@ -78,12 +78,12 @@ REGISTRY = OrderedDict([
     ("FSM_ALWAYS_FIRE", ("0", "1 = hold fire every tick (parked)")),
     ("FSM_HULK_CLOSING", ("0", "1 = shoot a hulk only while it is closing on the player (or within 25 px); "
                                "one walking away gets no shot, the next target does. Movement unchanged")),
-    ("FSM_FIRE_SKIP_RECEDING", ("0", "1 = do not aim at sparks / tank shells flying away from the player "
+    ("FSM_FIRE_SKIP_RECEDING", ("0", "Vision default 1. 1 = do not aim at sparks / tank shells flying away from the player "
                                      "(unless it walks toward them, or a shell will bounce back within 40 px "
                                      "in 8 ticks); never skips cruise missiles. Movement unchanged")),
-    ("FSM_FIRE_FALLBACK_REACH", ("0", "px, 0 = off. When the FSM has no target, aim at the nearest killable "
+    ("FSM_FIRE_FALLBACK_REACH", ("0", "Vision default 250. px, 0 = off. When the FSM has no target, aim at the nearest killable "
                                       "within this reach that is lined up (+-12 deg) with a fire direction "
-                                      "instead of along the move direction (which shoots civilians). Try 250")),
+                                      "instead of along the move direction (which shoots civilians)")),
     ("FSM_SAVE_GRUNT", ("0", "N, 0 = off. Endgame farming: with civilians out and only <= N grunts left, "
                              "release the fire stick and rescue (protects the last N grunts from fire when "
                              "<= N+3 killables remain). Ends on: no civilian, Brain/Prog present, grunt within "
@@ -93,7 +93,8 @@ REGISTRY = OrderedDict([
 # Knobs the brain overrides on the vision path unless the operator pins them.
 VISION_EFFECTIVE = {"VSEARCH_CLEAR_DANGER": "21", "VSEARCH_CLEAR_MARGIN": "12",
                     "VSEARCH_FIRE_ALT": "1", "VSEARCH_FIRE_ALT_R": "400",
-                    "VSEARCH_FIREPLAN": "1", "FSM_RESCUE_SEEK": "1"}
+                    "VSEARCH_FIREPLAN": "1", "FSM_RESCUE_SEEK": "1",
+                    "FSM_FIRE_SKIP_RECEDING": "1", "FSM_FIRE_FALLBACK_REACH": "250"}
 
 PREFIXES = ("VSEARCH_", "FSM_", "ROBOTRON_")
 APPLIED = OrderedDict()      # what preload() put into the environment, in order
@@ -177,7 +178,8 @@ def effective_values(environ=None, vision=True, applied=None):
     """Every registered knob with the value actually in force, following
     brain.py's rules for the vision path: the vision margins apply only if
     NEITHER margin is pinned, the vision fire-alt radius only if
-    VSEARCH_FIRE_ALT is not pinned, fireplan only if not pinned. Plus any
+    VSEARCH_FIRE_ALT is not pinned, fireplan only if not pinned, and FSM_FIRE_SKIP_RECEDING
+    (1) / FSM_FIRE_FALLBACK_REACH (250) each only if that knob is not pinned. Plus any
     unregistered knob the operator set. Written into report.json."""
     env = os.environ if environ is None else environ
     pin = pinned(env, applied)
@@ -191,6 +193,11 @@ def effective_values(environ=None, vision=True, applied=None):
             out["VSEARCH_FIRE_ALT"], out["VSEARCH_FIRE_ALT_R"] = "1", "400"
         if "VSEARCH_FIREPLAN" not in pin:
             out["VSEARCH_FIREPLAN"] = "1"
+        # independent of each other: pinning one leaves the other's vision default
+        if "FSM_FIRE_SKIP_RECEDING" not in pin:
+            out["FSM_FIRE_SKIP_RECEDING"] = "1"
+        if "FSM_FIRE_FALLBACK_REACH" not in pin:
+            out["FSM_FIRE_FALLBACK_REACH"] = "250"
         out["FSM_RESCUE_SEEK"] = env.get("FSM_RESCUE_SEEK", "1")
     for k in sorted(env):
         if k.startswith(PREFIXES) and k not in out and k != "ROBOTRON_ARM":

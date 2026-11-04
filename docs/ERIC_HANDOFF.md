@@ -115,6 +115,15 @@ Three kinds of setting, all recorded in `report.json`:
   the console's default for the *other* off (pin both), and pinning
   `VSEARCH_FIRE_ALT` drops the fire-alt radius from 400 to 160 unless you
   pin `VSEARCH_FIRE_ALT_R` as well.
+- **Two fire-target defaults, new 2026-11** (vision path only; memory keeps
+  both at 0): `FSM_FIRE_SKIP_RECEDING=1` (do not aim at sparks / tank shells
+  flying away) and `FSM_FIRE_FALLBACK_REACH=250` (with no FSM target, aim at
+  the nearest lined-up killable within 250 px instead of along the move
+  direction, which shoots civilians). MAME lab, paired: both together ACT 8,
+  900 games, NET +0.023 [+0.009,+0.037], deaths/wave -0.033, waves +0.87; ACT 4,
+  600 games, NET +0.018, waves +0.90. Turn one off with
+  `--knob FSM_FIRE_SKIP_RECEDING=0` or `--knob FSM_FIRE_FALLBACK_REACH=0`;
+  they are independent, so pinning one leaves the other on (unlike the margins).
 - **A config file** for the settings you always use, so the command line
   stays short:
 

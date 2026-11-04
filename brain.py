@@ -23,6 +23,10 @@ _USER_PINNED_MARGINS = ("VSEARCH_CLEAR_DANGER" in os.environ
                         or "VSEARCH_CLEAR_MARGIN" in os.environ)
 _USER_PINNED_FIREPLAN = "VSEARCH_FIREPLAN" in os.environ
 _USER_PINNED_FIRE_ALT = "VSEARCH_FIRE_ALT" in os.environ
+# These two are independent of each other (pinning one leaves the other's
+# vision default on), unlike the margins pair.
+_USER_PINNED_SKIP_RECEDING = "FSM_FIRE_SKIP_RECEDING" in os.environ
+_USER_PINNED_FALLBACK_REACH = "FSM_FIRE_FALLBACK_REACH" in os.environ
 
 # The planner reads these at import time, so seed the champion defaults BEFORE
 # importing the engine modules. setdefault => real env vars still win (for A/B).
@@ -42,9 +46,14 @@ from .engine.clearance_planner import (clearance_search, DXY,  # noqa: E402
 # worst-game floor W10 vs W7); 1.3x regressed. Memory path keeps 18/10.
 VISION_MARGINS = (21.0, 12.0)
 VISION_FIRE_ALT_R = 400.0   # fire-alternation second-target radius (proxy plateau)
+# 2026-11 MAME lab (package brain, paired): both knobs together ACT 8 900 games
+# NET +0.023 [+0.009,+0.037], waves +0.87; ACT 4 600 games NET +0.018, waves +0.90.
+# Vision defaults unless pinned (explicit =0 turns one off); memory path keeps 0.
+VISION_FIRE_FALLBACK_REACH = 250.0
+VISION_SKIP_RECEDING = True
 from . import coords                                          # noqa: E402
 
-# ── Behaviour knobs (2026-11, A/B candidates, all OFF by default) ─────────────
+# ── Behaviour knobs (2026-11; FIRE_FALLBACK_REACH and SKIP_RECEDING are vision defaults, see ChampionBrain.__init__) ─────────────
 # FSM_FIRE_FALLBACK_REACH (px, 0 = off): when the FSM has nothing to shoot
 # (fire STAY) the old code fires along the MOVE direction, which is how the bot
 # ends up shooting the civilians it is walking toward. With a reach, fire at the
@@ -282,6 +291,15 @@ class ChampionBrain:
         if not _USER_PINNED_FIRE_ALT:
             on = use_coaster if fire_alt is None else bool(fire_alt)
             set_fire_alt(on, VISION_FIRE_ALT_R if on else None)
+        # FSM_FIRE_SKIP_RECEDING / FSM_FIRE_FALLBACK_REACH: on for vision unless
+        # pinned (each independently); the pinned/memory value is the import-time
+        # env read. The FSM and planner keep their own copies of SKIP_RECEDING.
+        global FIRE_FALLBACK_REACH
+        if not _USER_PINNED_SKIP_RECEDING:
+            fsm.SKIP_RECEDING = bool(use_coaster and VISION_SKIP_RECEDING)
+            cp.set_fire_gates(skip_receding=fsm.SKIP_RECEDING)
+        if not _USER_PINNED_FALLBACK_REACH:
+            FIRE_FALLBACK_REACH = VISION_FIRE_FALLBACK_REACH if use_coaster else 0.0
         self.last_mv = 0
         self.clock = time.monotonic       # save-grunt timer (tests inject a fake)
         self._save_reset()

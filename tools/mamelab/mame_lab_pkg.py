@@ -5,7 +5,8 @@ Same MAME gym, same vision-defect model and the same LAB_* knobs as
 but the decision is made by robotron_ai.brain.ChampionBrain.decide() with
 use_coaster=True - i.e. the console's code: VelocityTracker, ProjectileCoaster,
 engine/robotron_fsm.py, engine/clearance_planner.py, brain.py's vision-path
-pinning (margins 21/12, FIREPLAN on, FIRE_ALT on R=400 unless env-pinned).
+pinning (margins 21/12, FIREPLAN on, FIRE_ALT on R=400, FSM_FIRE_SKIP_RECEDING=1,
+FSM_FIRE_FALLBACK_REACH=250, each unless env-pinned).
 
 The package to test is whatever `robotron_ai` resolves to on PYTHONPATH
 (run_ab.py --checkout PATH sets that up through a symlink).

@@ -269,6 +269,12 @@ override with the matching env var only if you're experimenting):
   that's boxing you in — close-fired sparks arrive faster than any dodge can
   react, so killing the source is the only defence. The single biggest vision
   win (deaths/wave 1.20 vs 1.38, max wave 21.9 vs 17.5).
+- **Fire-target gating** (`FSM_FIRE_SKIP_RECEDING=1`, `FSM_FIRE_FALLBACK_REACH=250`;
+  default on for vision since 2026-11, memory keeps 0): skip sparks / shells
+  flying away, and with no FSM target aim at the nearest lined-up killable
+  instead of along the move direction. MAME lab NET +0.023 [+0.009,+0.037]
+  (900 games). Off with `--knob FSM_FIRE_SKIP_RECEDING=0` /
+  `--knob FSM_FIRE_FALLBACK_REACH=0`; each pins independently.
 - **Widened planner margins** (`VSEARCH_CLEAR_DANGER/MARGIN` 21/12): absorbs
   vision tracking noise; memory keeps 18/10.
 - **Projectile track-and-coast**: fast projectiles are tracked and coasted

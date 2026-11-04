@@ -72,6 +72,9 @@ $PY tools/mamelab/run_ab.py --lab pkg \
 * Env pinning rules (brain.py): setting `VSEARCH_CLEAR_DANGER/MARGIN`, `VSEARCH_FIREPLAN`, or `VSEARCH_FIRE_ALT` pins
   it and disables the vision default; e.g. "fire_alt off" = `--a-env VSEARCH_FIRE_ALT=0`. Setting only one of
   DANGER/MARGIN leaves the other at the 18/10 import default and drops BOTH 21/12 pins, so set both.
+* Since 2026-11 the package brain's vision defaults also include `FSM_FIRE_SKIP_RECEDING=1` and
+  `FSM_FIRE_FALLBACK_REACH=250` (each pinned independently; `=0` turns it off). A default-config arm A therefore
+  includes them: old "knob off" baselines now need `--a-env FSM_FIRE_SKIP_RECEDING=0 --a-env FSM_FIRE_FALLBACK_REACH=0`.
 * Other `LAB_*` for both arms: `--calibration LAB_DROP=0.05` etc. Defaults: K=1 LEAD=1.5 LAG=0.7 DROP=.10 PDROP=.02 NOISE=2.
 * Same trial index = same MAME game seed (`MAME_RL_SEED_BASE`) AND same defect RNG seed in both arms
   (`--independent-defects` to decouple). Arm ports 23000+trial / 25000+trial; do not start two batches at once
